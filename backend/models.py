@@ -52,6 +52,13 @@ class TemperatureIngest(BaseModel):
     deviceId: str
     devicePassword: str
     temperature: float
+    nonce: Optional[int] = None
+    signature: Optional[str] = None
+
+
+class ToggleHmacRequest(BaseModel):
+    device_id: str
+    require_hmac: bool
 
 
 class TransporterAccessRequest(BaseModel):

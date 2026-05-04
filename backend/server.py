@@ -6,12 +6,17 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import uuid
+import hmac
+import hashlib
+import io
+import csv
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, Request
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -25,7 +30,7 @@ from models import (
     LoginRequest, TwoFactorVerifyRequest, TwoFactorEnrollVerifyRequest,
     ChangePasswordRequest, CreateTransporterRequest,
     DeviceApproveRequest, DeviceRejectRequest, TemperatureIngest,
-    TransporterAccessRequest, now_iso,
+    TransporterAccessRequest, ToggleHmacRequest, now_iso,
 )
 
 logger = logging.getLogger("coldchain")
@@ -301,6 +306,199 @@ async def device_alerts(device_id: str, admin=Depends(require_role("admin"))):
     ).sort("ts", -1).to_list(200)
 
 
+@api.post("/devices/secure-mode")
+async def toggle_secure_mode(body: ToggleHmacRequest, admin=Depends(require_role("admin"))):
+    """Activar/desactivar modo seguro (HMAC obligatorio) por dispositivo."""
+    res = await db.devices.update_one(
+        {"device_id": body.device_id},
+        {"$set": {"require_hmac": bool(body.require_hmac)}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    await db.events.insert_one({
+        "id": str(uuid.uuid4()), "device_id": body.device_id,
+        "type": "secure_mode_changed", "ts": now_iso(), "actor": admin["email"],
+        "value": bool(body.require_hmac),
+    })
+    return {"ok": True, "require_hmac": bool(body.require_hmac)}
+
+
+def _classify(t: float) -> str:
+    if t < TEMP_MIN or t > TEMP_MAX:
+        return "critical"
+    if t <= WARN_LOW or t >= WARN_HIGH:
+        return "warning"
+    return "ok"
+
+
+@api.get("/devices/{device_id}/export")
+async def export_device(device_id: str, format: str = "csv", hours: int = 24,
+                        admin=Depends(require_role("admin"))):
+    """Exporta el histórico (CSV o PDF) del dispositivo en las últimas `hours` horas."""
+    if format not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format debe ser csv o pdf")
+    if hours <= 0 or hours > 24 * 365:
+        raise HTTPException(status_code=400, detail="hours fuera de rango")
+
+    device = await db.devices.find_one(
+        {"device_id": device_id}, {"_id": 0, "device_password_hash": 0}
+    )
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    readings = await db.readings.find(
+        {"device_id": device_id, "ts": {"$gte": since}}, {"_id": 0}
+    ).sort("ts", 1).to_list(100000)
+    alerts = await db.alerts.find(
+        {"device_id": device_id, "ts": {"$gte": since}}, {"_id": 0}
+    ).sort("ts", 1).to_list(10000)
+
+    fname_base = f"coldchain_{device_id}_{hours}h"
+
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["timestamp_iso", "device_id", "device_name",
+                         "temperature_c", "status"])
+        for r in readings:
+            t = float(r["temperature"])
+            writer.writerow([r["ts"], device_id, device.get("name", ""),
+                             f"{t:.2f}", _classify(t)])
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{fname_base}.csv"'},
+        )
+
+    # ---- PDF ----
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                    TableStyle, PageBreak)
+
+    pdf_buf = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buf, pagesize=A4, leftMargin=18*mm,
+                            rightMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#0c4a6e"),
+                        spaceAfter=4)
+    label = ParagraphStyle("label", parent=styles["Normal"], textColor=colors.HexColor("#64748b"),
+                           fontSize=8, leading=10, spaceAfter=0)
+    body_st = ParagraphStyle("body", parent=styles["Normal"], fontSize=10, leading=14)
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8, leading=10,
+                           textColor=colors.HexColor("#475569"))
+
+    elements = []
+    elements.append(Paragraph("ColdChain Dashboard — Reporte de cadena de frío", h1))
+    elements.append(Paragraph(
+        f"Dispositivo <b>{device_id}</b> · {device.get('name','')}<br/>"
+        f"Periodo: últimas {hours} h · Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        small))
+    elements.append(Spacer(1, 8))
+
+    # Stats
+    if readings:
+        temps = [float(r["temperature"]) for r in readings]
+        mn, mx = min(temps), max(temps)
+        avg = sum(temps) / len(temps)
+        out_of_range = sum(1 for t in temps if t < TEMP_MIN or t > TEMP_MAX)
+        warn_count = sum(1 for t in temps
+                         if (TEMP_MIN <= t <= TEMP_MAX) and (t <= WARN_LOW or t >= WARN_HIGH))
+    else:
+        mn = mx = avg = 0.0
+        out_of_range = warn_count = 0
+
+    stats_data = [
+        ["Lecturas", "Mínima", "Máxima", "Promedio", "Críticas", "Preventivas"],
+        [str(len(readings)), f"{mn:.2f} °C", f"{mx:.2f} °C", f"{avg:.2f} °C",
+         str(out_of_range), str(warn_count)],
+    ]
+    t_stats = Table(stats_data, hAlign="LEFT", colWidths=[28*mm]*6)
+    t_stats.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0c4a6e")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#f1f5f9")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+    ]))
+    elements.append(t_stats)
+    elements.append(Spacer(1, 14))
+
+    # Alerts
+    elements.append(Paragraph("Alertas del periodo", styles["Heading3"]))
+    if alerts:
+        a_rows = [["Severidad", "Temp.", "Mensaje", "Fecha/Hora (UTC)"]]
+        for a in alerts:
+            a_rows.append([
+                a.get("severity", "").upper(),
+                f"{float(a.get('temperature') or 0):.2f} °C",
+                Paragraph(a.get("message", ""), small),
+                a.get("ts", "")[:19].replace("T", " "),
+            ])
+        t_alerts = Table(a_rows, hAlign="LEFT", colWidths=[22*mm, 22*mm, 90*mm, 40*mm])
+        t_alerts.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#f8fafc")]),
+        ]))
+        elements.append(t_alerts)
+    else:
+        elements.append(Paragraph("Sin alertas en el periodo.", body_st))
+    elements.append(Spacer(1, 14))
+
+    # Readings (last 200 to keep PDF size manageable)
+    elements.append(Paragraph("Últimas lecturas", styles["Heading3"]))
+    rdg = readings[-200:]
+    if rdg:
+        r_rows = [["Fecha/Hora (UTC)", "Temp. (°C)", "Estado"]]
+        for r in rdg:
+            t_val = float(r["temperature"])
+            r_rows.append([
+                r["ts"][:19].replace("T", " "),
+                f"{t_val:.2f}",
+                _classify(t_val),
+            ])
+        t_rdg = Table(r_rows, hAlign="LEFT", colWidths=[55*mm, 35*mm, 40*mm])
+        t_rdg.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#f8fafc")]),
+        ]))
+        elements.append(t_rdg)
+    else:
+        elements.append(Paragraph("Sin lecturas en el periodo.", body_st))
+
+    elements.append(Spacer(1, 12))
+    elements.append(Paragraph(
+        "Documento generado automáticamente. Rango objetivo 2°C – 8°C. "
+        "Las alertas preventivas se emiten ≤2.5°C / ≥7.5°C; críticas <2°C / >8°C.",
+        small))
+
+    doc.build(elements)
+    pdf_buf.seek(0)
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname_base}.pdf"'},
+    )
+
+
 # ====== ALERTS ======
 @api.get("/alerts")
 async def list_alerts(active_only: bool = False, admin=Depends(require_role("admin"))):
@@ -340,12 +538,30 @@ async def stats_summary(admin=Depends(require_role("admin"))):
 
 
 # ====== TEMPERATURE INGEST (ESP32) ======
+def _compute_hmac(secret: str, device_id: str, nonce: int, temperature: float) -> str:
+    """HMAC-SHA256 hex of '{device_id}|{nonce}|{temperature}' with the device password as key.
+    Temperature is normalised to 2 decimal places to avoid float-string mismatches.
+    """
+    msg = f"{device_id}|{nonce}|{temperature:.2f}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
 @api.post("/temperatura")
 async def ingest_temperature(body: TemperatureIngest):
-    """Endpoint público al que el ESP32 hace POST. Auth por device_id + device_password."""
+    """Endpoint público al que el ESP32 hace POST. Auth por device_id + device_password.
+    Soporta opcional HMAC + nonce anti-replay. Si el dispositivo tiene `require_hmac=True`,
+    se exigen `nonce` y `signature` válidos.
+    """
     device = await db.devices.find_one({"device_id": body.deviceId})
     if not device:
-        # First time - register as pending and store password hash
+        # First time - register as pending. Si trae HMAC, lo validamos y lo dejamos
+        # en modo seguro desde el inicio. Si no, queda en compatibilidad.
+        require_hmac = False
+        if body.nonce is not None and body.signature is not None:
+            expected = _compute_hmac(body.devicePassword, body.deviceId, body.nonce, body.temperature)
+            if not hmac.compare_digest(expected, body.signature):
+                raise HTTPException(status_code=401, detail="Firma HMAC inválida")
+            require_hmac = True
         new_dev = {
             "id": str(uuid.uuid4()),
             "device_id": body.deviceId,
@@ -356,6 +572,8 @@ async def ingest_temperature(body: TemperatureIngest):
             "last_seen": now_iso(),
             "last_temperature": body.temperature,
             "transporter_email": None,
+            "require_hmac": require_hmac,
+            "last_nonce": body.nonce if body.nonce is not None else 0,
         }
         await db.devices.insert_one(new_dev)
         await db.events.insert_one({
@@ -368,14 +586,26 @@ async def ingest_temperature(body: TemperatureIngest):
     if not verify_password(body.devicePassword, device.get("device_password_hash", "")):
         raise HTTPException(status_code=401, detail="Contraseña del dispositivo inválida")
 
+    # HMAC validation
+    require_hmac = bool(device.get("require_hmac", False))
+    if require_hmac or body.signature is not None:
+        if body.nonce is None or body.signature is None:
+            raise HTTPException(status_code=401, detail="Falta nonce/signature (modo seguro activo)")
+        expected = _compute_hmac(body.devicePassword, body.deviceId, body.nonce, body.temperature)
+        if not hmac.compare_digest(expected, body.signature):
+            raise HTTPException(status_code=401, detail="Firma HMAC inválida")
+        last_nonce = int(device.get("last_nonce") or 0)
+        if body.nonce <= last_nonce:
+            raise HTTPException(status_code=409, detail="Nonce reutilizado (replay)")
+
     if device["status"] == "rejected":
         raise HTTPException(status_code=403, detail="Dispositivo rechazado")
     if device["status"] == "pending":
         # update last_seen but don't accept readings
-        await db.devices.update_one(
-            {"device_id": body.deviceId},
-            {"$set": {"last_seen": now_iso()}},
-        )
+        upd = {"last_seen": now_iso()}
+        if body.nonce is not None:
+            upd["last_nonce"] = body.nonce
+        await db.devices.update_one({"device_id": body.deviceId}, {"$set": upd})
         return {"ok": True, "status": "pending", "message": "Esperando aprobación del administrador"}
 
     # store reading
@@ -387,7 +617,11 @@ async def ingest_temperature(body: TemperatureIngest):
     })
     await db.devices.update_one(
         {"device_id": body.deviceId},
-        {"$set": {"last_seen": ts, "last_temperature": body.temperature}},
+        {"$set": {
+            "last_seen": ts,
+            "last_temperature": body.temperature,
+            **({"last_nonce": body.nonce} if body.nonce is not None else {}),
+        }},
     )
 
     # Alerting logic

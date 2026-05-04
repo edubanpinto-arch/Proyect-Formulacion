@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import Topbar from "../components/Topbar";
-import { api } from "../lib/api";
+import { api, API } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { ChevronLeft, Thermometer, Activity } from "lucide-react";
+import { ChevronLeft, Thermometer, Activity, Download, FileText, ShieldCheck, ShieldOff } from "lucide-react";
 import TempChart from "../components/TempChart";
 import { StatusBadge, TempBadge, SeverityBadge } from "../components/Badges";
+import { toast } from "sonner";
 
 export default function DeviceDetail() {
   const { deviceId } = useParams();
@@ -15,6 +16,8 @@ export default function DeviceDetail() {
   const [device, setDevice] = useState(null);
   const [readings, setReadings] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [hours, setHours] = useState(24);
+  const [exporting, setExporting] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -34,6 +37,41 @@ export default function DeviceDetail() {
     const id = setInterval(load, 6000);
     return () => clearInterval(id);
   }, [load]);
+
+  const downloadExport = async (format) => {
+    setExporting(format);
+    try {
+      const token = localStorage.getItem("cc_token");
+      const url = `${API}/devices/${deviceId}/export?format=${format}&hours=${hours}`;
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = `coldchain_${deviceId}_${hours}h.${format}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(objUrl);
+      toast.success(`${format.toUpperCase()} listo`);
+    } catch (e) {
+      toast.error("No se pudo exportar");
+    } finally { setExporting(null); }
+  };
+
+  const toggleSecure = async () => {
+    if (!device) return;
+    try {
+      await api.post("/devices/secure-mode", {
+        device_id: device.device_id,
+        require_hmac: !device.require_hmac,
+      });
+      toast.success(!device.require_hmac ? t("secure_mode_on") : t("secure_mode_off"));
+      load();
+    } catch (e) { toast.error("Error"); }
+  };
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 
@@ -68,15 +106,75 @@ export default function DeviceDetail() {
         </div>
 
         <Card className="p-6 border-slate-200">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
             <h2 className="font-heading text-slate-900 font-medium flex items-center gap-2"><Activity size={18} /> {t("temperature_history")}</h2>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5 text-emerald-700"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/30 border border-emerald-500" /> {t("safe_zone")}</span>
-              <span className="flex items-center gap-1.5 text-amber-700"><span className="w-3 border-t-2 border-amber-500 border-dashed" /> 2.5° / 7.5°</span>
-              <span className="flex items-center gap-1.5 text-rose-700"><span className="w-3 border-t-2 border-rose-500 border-dotted" /> 2° / 8°</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500 mr-1">{t("range")}</span>
+              <select
+                data-testid="export-range"
+                value={hours}
+                onChange={(e) => setHours(parseInt(e.target.value, 10))}
+                className="text-xs border border-slate-200 rounded px-2 py-1.5 bg-white"
+              >
+                <option value={24}>{t("last_24h")}</option>
+                <option value={168}>{t("last_7d")}</option>
+                <option value={720}>{t("last_30d")}</option>
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-slate-200"
+                onClick={() => downloadExport("csv")}
+                disabled={exporting === "csv"}
+                data-testid="export-csv-btn"
+              >
+                <Download size={14} className="mr-1.5" /> {t("export")} {t("export_csv")}
+              </Button>
+              <Button
+                size="sm"
+                className="bg-sky-700 hover:bg-sky-800 text-white"
+                onClick={() => downloadExport("pdf")}
+                disabled={exporting === "pdf"}
+                data-testid="export-pdf-btn"
+              >
+                <FileText size={14} className="mr-1.5" /> {t("export")} {t("export_pdf")}
+              </Button>
             </div>
           </div>
+          <div className="flex items-center gap-3 text-xs mb-3">
+            <span className="flex items-center gap-1.5 text-emerald-700"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/30 border border-emerald-500" /> {t("safe_zone")}</span>
+            <span className="flex items-center gap-1.5 text-amber-700"><span className="w-3 border-t-2 border-amber-500 border-dashed" /> 2.5° / 7.5°</span>
+            <span className="flex items-center gap-1.5 text-rose-700"><span className="w-3 border-t-2 border-rose-500 border-dotted" /> 2° / 8°</span>
+          </div>
           <TempChart readings={readings} />
+        </Card>
+
+        {/* Secure mode card */}
+        <Card className="mt-6 p-6 border-slate-200" data-testid="secure-mode-card">
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 rounded-md grid place-items-center border ${device?.require_hmac ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-slate-100 border-slate-200 text-slate-500"}`}>
+                {device?.require_hmac ? <ShieldCheck size={18} /> : <ShieldOff size={18} />}
+              </div>
+              <div>
+                <div className="font-heading font-medium text-slate-900">{t("secure_mode")}</div>
+                <div className="text-xs text-slate-500 mt-0.5 max-w-xl">{t("secure_mode_help")}</div>
+                <div className="mt-2">
+                  <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider border font-semibold ${device?.require_hmac ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-300"}`} data-testid="secure-mode-status">
+                    {device?.require_hmac ? t("secure_mode_on") : t("secure_mode_off")}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <Button
+              variant={device?.require_hmac ? "outline" : "default"}
+              className={device?.require_hmac ? "border-rose-200 text-rose-700 hover:bg-rose-50" : "bg-sky-700 hover:bg-sky-800 text-white"}
+              onClick={toggleSecure}
+              data-testid="secure-mode-toggle"
+            >
+              {device?.require_hmac ? t("disable_secure_mode") : t("enable_secure_mode")}
+            </Button>
+          </div>
         </Card>
 
         <Card className="mt-6 p-0 overflow-hidden border-slate-200">
