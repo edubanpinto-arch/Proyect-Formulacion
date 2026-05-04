@@ -4,14 +4,12 @@ import { api, formatErr } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { StatusBadge, TempBadge, SeverityBadge } from "../components/Badges";
-import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, Plus, ShieldAlert, Truck } from "lucide-react";
+import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, ShieldAlert, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import UsersManager from "../components/UsersManager";
 
 function KPI({ label, value, hint, icon: Icon, accent = "sky", testid }) {
   const accents = {
@@ -44,8 +42,6 @@ export default function AdminDashboard() {
   const [pending, setPending] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [transporters, setTransporters] = useState([]);
-  const [openCreate, setOpenCreate] = useState(false);
-  const [newT, setNewT] = useState({ email: "", name: "", password: "" });
 
   const loadAll = useCallback(async () => {
     try {
@@ -97,17 +93,6 @@ export default function AdminDashboard() {
       toast.success("Asignado");
       loadAll();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
-  };
-
-  const createTransporter = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post("/admin/transporters", newT);
-      toast.success("Transportador creado");
-      setOpenCreate(false);
-      setNewT({ email: "", name: "", password: "" });
-      loadAll();
-    } catch (err) { toast.error(formatErr(err.response?.data?.detail)); }
   };
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
@@ -173,7 +158,7 @@ export default function AdminDashboard() {
           <TabsList className="bg-white border border-slate-200">
             <TabsTrigger value="devices" data-testid="tab-devices">{t("devices")}</TabsTrigger>
             <TabsTrigger value="alerts" data-testid="tab-alerts">{t("alerts")} {activeAlerts.length > 0 && <span className="ml-1.5 text-[10px] bg-rose-600 text-white rounded-full px-1.5">{activeAlerts.length}</span>}</TabsTrigger>
-            <TabsTrigger value="transporters" data-testid="tab-transporters">{t("transporters")}</TabsTrigger>
+            <TabsTrigger value="users" data-testid="tab-users">{t("users")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="devices" className="mt-4">
@@ -266,55 +251,8 @@ export default function AdminDashboard() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="transporters" className="mt-4">
-            <Card className="p-6 border-slate-200">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-heading font-medium text-slate-900 flex items-center gap-2"><Truck size={18} /> {t("transporters")}</h3>
-                <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-                  <DialogTrigger asChild>
-                    <Button className="bg-sky-700 hover:bg-sky-800 text-white" data-testid="add-transporter-btn">
-                      <Plus size={14} className="mr-1" /> {t("add_transporter")}
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{t("add_transporter")}</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={createTransporter} className="space-y-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("name")}</Label>
-                        <Input data-testid="new-transporter-name" required value={newT.name} onChange={(e) => setNewT({ ...newT, name: e.target.value })} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("email")}</Label>
-                        <Input data-testid="new-transporter-email" type="email" required value={newT.email} onChange={(e) => setNewT({ ...newT, email: e.target.value })} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("password")}</Label>
-                        <Input data-testid="new-transporter-password" type="text" required minLength={6} value={newT.password} onChange={(e) => setNewT({ ...newT, password: e.target.value })} />
-                      </div>
-                      <DialogFooter>
-                        <Button type="button" variant="ghost" onClick={() => setOpenCreate(false)}>{t("cancel")}</Button>
-                        <Button type="submit" className="bg-sky-700 hover:bg-sky-800 text-white" data-testid="create-transporter-submit">{t("create")}</Button>
-                      </DialogFooter>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              </div>
-              <table className="w-full text-sm">
-                <thead className="text-[10px] uppercase tracking-[0.18em] text-slate-500 border-b border-slate-200">
-                  <tr><th className="text-left py-2">{t("name")}</th><th className="text-left py-2">{t("email")}</th></tr>
-                </thead>
-                <tbody>
-                  {transporters.map((tr) => (
-                    <tr key={tr.id} className="border-b border-slate-100">
-                      <td className="py-3 text-slate-900">{tr.name}</td>
-                      <td className="py-3 mono text-slate-600">{tr.email}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
+          <TabsContent value="users" className="mt-4">
+            <UsersManager />
           </TabsContent>
         </Tabs>
       </main>

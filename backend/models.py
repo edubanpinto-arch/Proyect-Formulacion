@@ -37,6 +37,32 @@ class CreateTransporterRequest(BaseModel):
     password: str = Field(min_length=6)
 
 
+class CreateUserRequest(BaseModel):
+    email: EmailStr
+    name: str
+    password: str = Field(min_length=6)
+    role: str = Field(pattern="^(admin|transporter)$")
+    must_change_password: bool = True
+
+
+class UpdateUserRequest(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = Field(default=None, pattern="^(admin|transporter)$")
+    disabled: Optional[bool] = None
+    must_change_password: Optional[bool] = None
+    reset_2fa: Optional[bool] = None
+
+
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=6)
+    must_change_password: bool = True
+
+
+class SelfChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 # ---- Devices ----
 class DeviceApproveRequest(BaseModel):
     device_id: str

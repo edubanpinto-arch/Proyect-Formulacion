@@ -1,0 +1,30 @@
+{
+  "summary": "E2E testing of NEW admin user-management endpoints + self-service password change. Backend: 22/22 pytest cases passed in test_user_management.py covering GET/POST/PATCH/DELETE /api/admin/users, role filter, sensitive-field exclusion (no password_hash/totp_secret), email lowercase normalization, duplicate-email 400, invalid-role 422, name update, disable/re-enable+disabled-login 403 with 'deshabilitado' detail, cannot-disable-self 400, reset_2fa, admin reset-password forces step=change_password on next login, cannot-delete-self 400, delete + 404, full new-admin onboarding (login->change_password->enroll_2fa->access), self-change-pwd success/wrong-current 401/same-pwd 400/unauth 401. Smoke: prior transporter login + /api/stats/summary still work. Frontend Playwright (Chromium): admin login (must_change_password->enroll_2fa->dashboard), Usuarios tab loads users table with role/status/2FA/must_change_password columns, Agregar usuario dialog creates user (rows 2->3), disable toggle works, reset-password dialog submit works, delete with confirmation alert dialog removes user (rows 3->2), Topbar user-menu-trigger dropdown works for both admin AND transporter, menu-change-password opens self-service dialog, wrong current password shows error toast, valid change succeeds, ES/EN language toggle works on the new screen, menu-logout returns to login.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_user_management.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_user_mgmt.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "models.CreateUserRequest enforces password min_length=6 while SelfChangePasswordRequest+ChangePasswordRequest enforce min_length=8 — inconsistent password policy across endpoints. Recommend unifying to >=8.",
+    "DELETE /admin/users last-admin guard counts only enabled admins ({disabled: {$ne: true}}); a malicious admin could disable the only other admin then delete a peer leaving zero enabled admins via separate calls. Consider also blocking 'disable' when target is the last enabled admin (mirror of the delete guard).",
+    "POST /admin/users does not validate password length (min_length=6 in pydantic only) and stores in plain bcrypt — fine, but UI default password 'must_change_password=true' is good; consider rejecting weak passwords centrally.",
+    "PATCH /admin/users/{id} role change is allowed even on self — an admin could demote themselves to transporter and then be locked out of admin functions. Recommend blocking self-role-change.",
+    "/api/auth/change-my-password requires current_password but does not enforce min_length on new_password beyond pydantic Field(min_length=8). OK, but consider also rejecting common/leaked passwords.",
+    "CORS still uses allow_origins=['*'] with allow_credentials=True (carried over from iteration 1) — browsers reject credentialed requests; cookie auth is effectively non-functional cross-origin (frontend uses Bearer token from localStorage, so it works).",
+    "_public_user includes created_at but list_users projection uses {_id:0, password_hash:0, totp_secret:0} — created_at OK; ensure new admin-created users always have created_at (they do via `now_iso()`)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_user_management.py (new)",
+    "/app/test_reports/iteration_2.json"
+  ],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% (all critical UI flows passed)"},
+  "test_credentials": "Admin edubanpinto@gmail.com / 1234567890 (reset to must_change_password=true, totp cleared after tests). Transporter transportador@coldchain.com / transport123. All TEST_-prefixed users cleaned up.",
+  "seed_data_creation": "Pytest creates ephemeral TEST_*@coldchain.com users and removes them in session teardown; admin is re-seeded back to its default state. Playwright run also created and deleted a TEST_ui_*@coldchain.com user via the UI itself, then performed a separate post-run mongo cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test_user_management.py is reusable (22 cases) and resets admin in cleanup. Backend.test backend_test.py from iteration_1 still applies for prior endpoints. Run with REACT_APP_BACKEND_URL exported. Admin DB state is back to initial (must_change_password=true, totp disabled, password=1234567890, disabled=false). No bugs found in the new feature; all 14 listed acceptance criteria verified."
+}

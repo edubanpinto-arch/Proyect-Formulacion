@@ -1,15 +1,19 @@
 import React from "react";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
-import { Snowflake, LogOut, Globe } from "lucide-react";
+import { Snowflake, LogOut, Globe, KeyRound, ChevronDown } from "lucide-react";
 import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from "./ui/dropdown-menu";
 import { Link, useLocation } from "react-router-dom";
+import { useState } from "react";
+import ChangeMyPasswordDialog from "./ChangeMyPasswordDialog";
 
 export default function Topbar() {
   const { user, logout } = useAuth();
   const { t, lang, setLang } = useI18n();
   const loc = useLocation();
   const isAdmin = user && user.role === "admin";
+  const [openPwd, setOpenPwd] = useState(false);
 
   return (
     <header className="sticky top-0 z-30 bg-white border-b border-slate-200" data-testid="topbar">
@@ -34,20 +38,40 @@ export default function Topbar() {
           >
             <Globe size={14} /> {lang.toUpperCase()}
           </button>
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-50 border border-slate-200">
-            <div className="text-xs">
-              <div className="text-slate-900 font-medium">{user?.name}</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                {isAdmin ? t("role_admin") : t("role_transporter")}
-              </div>
-            </div>
-          </div>
-          <Button onClick={logout} variant="ghost" data-testid="logout-btn" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                data-testid="user-menu-trigger"
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-50 border border-slate-200 hover:bg-slate-100"
+              >
+                <div className="text-xs text-left">
+                  <div className="text-slate-900 font-medium">{user?.name}</div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                    {isAdmin ? t("role_admin") : t("role_transporter")}
+                  </div>
+                </div>
+                <ChevronDown size={14} className="text-slate-400" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[220px]">
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{user?.email}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem data-testid="menu-change-password" onClick={() => setOpenPwd(true)}>
+                <KeyRound size={14} className="mr-2" /> {t("change_my_password")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem data-testid="menu-logout" onClick={logout} className="text-rose-700">
+                <LogOut size={14} className="mr-2" /> {t("logout")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button onClick={logout} variant="ghost" data-testid="logout-btn" className="sm:hidden text-slate-600 hover:text-slate-900 hover:bg-slate-100">
             <LogOut size={16} className="mr-1.5" />
             {t("logout")}
           </Button>
         </div>
       </div>
+      <ChangeMyPasswordDialog open={openPwd} onOpenChange={setOpenPwd} />
     </header>
   );
 }

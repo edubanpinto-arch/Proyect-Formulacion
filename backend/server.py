@@ -29,6 +29,8 @@ from auth import (
 from models import (
     LoginRequest, TwoFactorVerifyRequest, TwoFactorEnrollVerifyRequest,
     ChangePasswordRequest, CreateTransporterRequest,
+    CreateUserRequest, UpdateUserRequest, AdminResetPasswordRequest,
+    SelfChangePasswordRequest,
     DeviceApproveRequest, DeviceRejectRequest, TemperatureIngest,
     TransporterAccessRequest, ToggleHmacRequest, now_iso,
 )
@@ -58,6 +60,9 @@ async def login(body: LoginRequest, response: Response):
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+    if user.get("disabled"):
+        raise HTTPException(status_code=403, detail="Usuario deshabilitado. Contacte al administrador.")
 
     # First step: must change password
     if user.get("must_change_password"):
@@ -220,6 +225,126 @@ async def list_transporters(admin=Depends(require_role("admin"))):
         {"_id": 0, "password_hash": 0, "totp_secret": 0},
     ).to_list(500)
     return items
+
+
+# ====== ADMIN: ALL USERS (admins + transporters) ======
+def _public_user(u: dict) -> dict:
+    return {
+        "id": u.get("id"),
+        "email": u.get("email"),
+        "name": u.get("name"),
+        "role": u.get("role"),
+        "disabled": bool(u.get("disabled", False)),
+        "must_change_password": bool(u.get("must_change_password", False)),
+        "totp_enabled": bool(u.get("totp_enabled", False)),
+        "created_at": u.get("created_at"),
+    }
+
+
+@api.get("/admin/users")
+async def list_users(role: Optional[str] = None, admin=Depends(require_role("admin"))):
+    q = {}
+    if role in ("admin", "transporter"):
+        q["role"] = role
+    users = await db.users.find(q, {"_id": 0, "password_hash": 0, "totp_secret": 0}).to_list(1000)
+    return [_public_user(u) for u in users]
+
+
+@api.post("/admin/users")
+async def create_user(body: CreateUserRequest, admin=Depends(require_role("admin"))):
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Ya existe un usuario con ese correo")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": body.name,
+        "role": body.role,
+        "password_hash": hash_password(body.password),
+        "must_change_password": bool(body.must_change_password),
+        "totp_enabled": False,
+        "totp_secret": None,
+        "disabled": False,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(doc)
+    return _public_user(doc)
+
+
+@api.patch("/admin/users/{user_id}")
+async def update_user(user_id: str, body: UpdateUserRequest, admin=Depends(require_role("admin"))):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    update: dict = {}
+    if body.name is not None:
+        update["name"] = body.name
+    if body.role is not None:
+        update["role"] = body.role
+    if body.disabled is not None:
+        # Cannot disable yourself
+        if target["id"] == admin["id"] and body.disabled:
+            raise HTTPException(status_code=400, detail="No puedes deshabilitar tu propia cuenta")
+        update["disabled"] = bool(body.disabled)
+    if body.must_change_password is not None:
+        update["must_change_password"] = bool(body.must_change_password)
+    if body.reset_2fa:
+        update["totp_enabled"] = False
+        update["totp_secret"] = None
+
+    if update:
+        await db.users.update_one({"id": user_id}, {"$set": update})
+    refreshed = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0, "totp_secret": 0})
+    return _public_user(refreshed)
+
+
+@api.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, body: AdminResetPasswordRequest,
+                               admin=Depends(require_role("admin"))):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {
+            "password_hash": hash_password(body.new_password),
+            "must_change_password": bool(body.must_change_password),
+        }},
+    )
+    return {"ok": True}
+
+
+@api.delete("/admin/users/{user_id}")
+async def delete_user(user_id: str, admin=Depends(require_role("admin"))):
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    # Safety: prevent removing the last enabled admin
+    if target.get("role") == "admin":
+        remaining = await db.users.count_documents({"role": "admin", "disabled": {"$ne": True}, "id": {"$ne": user_id}})
+        if remaining == 0:
+            raise HTTPException(status_code=400, detail="No puedes eliminar el último administrador activo")
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
+
+# ====== SELF-SERVICE PASSWORD CHANGE ======
+@api.post("/auth/change-my-password")
+async def change_my_password(body: SelfChangePasswordRequest, user=Depends(get_current_user)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(body.current_password, full["password_hash"]):
+        raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta a la actual")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(body.new_password),
+                  "must_change_password": False}},
+    )
+    return {"ok": True}
 
 
 # ====== DEVICES ======
