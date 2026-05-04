@@ -782,7 +782,8 @@ async def list_audit(
         query["ts"] = ts_q
     if q:
         # case-insensitive contains across actor_email, action, target_label, ip
-        rx = {"$regex": q, "$options": "i"}
+        import re as _re
+        rx = {"$regex": _re.escape(q), "$options": "i"}
         query["$or"] = [
             {"actor_email": rx},
             {"action": rx},
