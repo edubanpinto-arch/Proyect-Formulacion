@@ -53,31 +53,85 @@ WARN_HIGH = 7.5
 INACTIVE_AFTER_SECONDS = 60  # device considered inactive if no reading for 60s
 
 
+# ====== AUDIT LOG ======
+def _client_ip(request: Optional[Request]) -> Optional[str]:
+    if not request:
+        return None
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+def _user_agent(request: Optional[Request]) -> Optional[str]:
+    if not request:
+        return None
+    return request.headers.get("user-agent")
+
+
+async def audit(action: str,
+                request: Optional[Request] = None,
+                actor: Optional[dict] = None,
+                actor_email: Optional[str] = None,
+                target_type: Optional[str] = None,
+                target_id: Optional[str] = None,
+                target_label: Optional[str] = None,
+                metadata: Optional[dict] = None,
+                success: bool = True):
+    """Persist an audit-log entry. Failures must NEVER raise."""
+    try:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "ts": now_iso(),
+            "action": action,
+            "actor_email": (actor or {}).get("email") if actor else actor_email,
+            "actor_id": (actor or {}).get("id") if actor else None,
+            "actor_role": (actor or {}).get("role") if actor else None,
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_label": target_label,
+            "ip": _client_ip(request),
+            "user_agent": _user_agent(request),
+            "success": bool(success),
+            "metadata": metadata or {},
+        }
+        await db.audit_log.insert_one(doc)
+    except Exception as e:  # never block business flow on audit failure
+        logger.warning(f"audit insert failed: {e}")
+
+
 # ====== AUTH ======
 @api.post("/auth/login")
-async def login(body: LoginRequest, response: Response):
+async def login(body: LoginRequest, response: Response, request: Request):
     email = body.email.lower().strip()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
+        await audit("auth.login_failed", request=request, actor_email=email,
+                    metadata={"reason": "invalid_credentials"}, success=False)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     if user.get("disabled"):
+        await audit("auth.login_failed", request=request, actor=user,
+                    metadata={"reason": "disabled"}, success=False)
         raise HTTPException(status_code=403, detail="Usuario deshabilitado. Contacte al administrador.")
 
     # First step: must change password
     if user.get("must_change_password"):
+        await audit("auth.login_step", request=request, actor=user,
+                    metadata={"step": "change_password"})
         token = create_temp_token(user["id"], user["email"], "must_change_password")
         return {"step": "change_password", "temp_token": token}
 
     # Admin: 2FA flow
     if user.get("role") == "admin":
         if not user.get("totp_enabled"):
-            # Force enrollment - create secret if not exists
             if not user.get("totp_secret"):
                 secret = generate_totp_secret()
                 await db.users.update_one({"id": user["id"]}, {"$set": {"totp_secret": secret}})
             else:
                 secret = user["totp_secret"]
+            await audit("auth.login_step", request=request, actor=user,
+                        metadata={"step": "enroll_2fa"})
             token = create_temp_token(user["id"], user["email"], "enroll_2fa")
             uri = totp_provisioning_uri(secret, user["email"])
             return {
@@ -86,12 +140,15 @@ async def login(body: LoginRequest, response: Response):
                 "secret": secret,
                 "qr_data_url": make_qr_data_url(uri),
             }
+        await audit("auth.login_step", request=request, actor=user,
+                    metadata={"step": "verify_2fa"})
         token = create_temp_token(user["id"], user["email"], "verify_2fa")
         return {"step": "verify_2fa", "temp_token": token}
 
     # Transportador: direct login
     access = create_access_token(user["id"], user["email"], user["role"], mfa_passed=True)
     set_auth_cookie(response, access)
+    await audit("auth.login_success", request=request, actor=user)
     return {
         "step": "ok",
         "access_token": access,
@@ -103,7 +160,7 @@ async def login(body: LoginRequest, response: Response):
 
 
 @api.post("/auth/change-password")
-async def change_password(body: ChangePasswordRequest, response: Response):
+async def change_password(body: ChangePasswordRequest, response: Response, request: Request):
     """Used both for forced first-time change (with temp_token) and self-service."""
     if body.temp_token:
         try:
@@ -126,6 +183,7 @@ async def change_password(body: ChangePasswordRequest, response: Response):
         {"id": user["id"]},
         {"$set": {"password_hash": hash_password(body.new_password), "must_change_password": False}},
     )
+    await audit("auth.password_changed_forced", request=request, actor=user)
 
     # Re-issue login flow: admins now go to enroll_2fa
     if user["role"] == "admin":
@@ -149,7 +207,7 @@ async def change_password(body: ChangePasswordRequest, response: Response):
 
 
 @api.post("/auth/2fa/enroll-verify")
-async def enroll_2fa(body: TwoFactorEnrollVerifyRequest, response: Response):
+async def enroll_2fa(body: TwoFactorEnrollVerifyRequest, response: Response, request: Request):
     try:
         payload = decode_token(body.temp_token)
     except Exception:
@@ -161,16 +219,19 @@ async def enroll_2fa(body: TwoFactorEnrollVerifyRequest, response: Response):
     if not user or not user.get("totp_secret"):
         raise HTTPException(status_code=400, detail="No hay secreto TOTP")
     if not totp_verify(user["totp_secret"], body.code):
+        await audit("auth.2fa_enroll_failed", request=request, actor=user, success=False)
         raise HTTPException(status_code=401, detail="Código TOTP incorrecto")
 
     await db.users.update_one({"id": user["id"]}, {"$set": {"totp_enabled": True}})
     access = create_access_token(user["id"], user["email"], user["role"], True)
     set_auth_cookie(response, access)
+    await audit("auth.2fa_enrolled", request=request, actor=user)
+    await audit("auth.login_success", request=request, actor=user, metadata={"via": "2fa_enroll"})
     return {"step": "ok", "access_token": access}
 
 
 @api.post("/auth/2fa/verify")
-async def verify_2fa(body: TwoFactorVerifyRequest, response: Response):
+async def verify_2fa(body: TwoFactorVerifyRequest, response: Response, request: Request):
     try:
         payload = decode_token(body.temp_token)
     except Exception:
@@ -181,9 +242,11 @@ async def verify_2fa(body: TwoFactorVerifyRequest, response: Response):
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if not totp_verify(user.get("totp_secret", ""), body.code):
+        await audit("auth.2fa_verify_failed", request=request, actor=user, success=False)
         raise HTTPException(status_code=401, detail="Código TOTP incorrecto")
     access = create_access_token(user["id"], user["email"], user["role"], True)
     set_auth_cookie(response, access)
+    await audit("auth.login_success", request=request, actor=user, metadata={"via": "2fa_verify"})
     return {"step": "ok", "access_token": access}
 
 
@@ -193,8 +256,9 @@ async def auth_me(user=Depends(get_current_user)):
 
 
 @api.post("/auth/logout")
-async def logout(response: Response):
+async def logout(response: Response, request: Request, user=Depends(get_current_user)):
     clear_auth_cookie(response)
+    await audit("auth.logout", request=request, actor=user)
     return {"ok": True}
 
 
@@ -251,7 +315,7 @@ async def list_users(role: Optional[str] = None, admin=Depends(require_role("adm
 
 
 @api.post("/admin/users")
-async def create_user(body: CreateUserRequest, admin=Depends(require_role("admin"))):
+async def create_user(body: CreateUserRequest, request: Request, admin=Depends(require_role("admin"))):
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Ya existe un usuario con ese correo")
@@ -268,11 +332,16 @@ async def create_user(body: CreateUserRequest, admin=Depends(require_role("admin
         "created_at": now_iso(),
     }
     await db.users.insert_one(doc)
+    await audit("admin.user_created", request=request, actor=admin,
+                target_type="user", target_id=doc["id"], target_label=email,
+                metadata={"role": body.role,
+                          "must_change_password": bool(body.must_change_password)})
     return _public_user(doc)
 
 
 @api.patch("/admin/users/{user_id}")
-async def update_user(user_id: str, body: UpdateUserRequest, admin=Depends(require_role("admin"))):
+async def update_user(user_id: str, body: UpdateUserRequest, request: Request,
+                      admin=Depends(require_role("admin"))):
     target = await db.users.find_one({"id": user_id})
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -285,10 +354,8 @@ async def update_user(user_id: str, body: UpdateUserRequest, admin=Depends(requi
             raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol")
         update["role"] = body.role
     if body.disabled is not None:
-        # Cannot disable yourself
         if target["id"] == admin["id"] and body.disabled:
             raise HTTPException(status_code=400, detail="No puedes deshabilitar tu propia cuenta")
-        # Cannot disable the last enabled admin
         if body.disabled and target.get("role") == "admin" and not target.get("disabled"):
             remaining = await db.users.count_documents({
                 "role": "admin",
@@ -306,12 +373,29 @@ async def update_user(user_id: str, body: UpdateUserRequest, admin=Depends(requi
 
     if update:
         await db.users.update_one({"id": user_id}, {"$set": update})
+        # Granular audit actions for the most relevant changes
+        if "disabled" in update:
+            await audit(
+                "admin.user_disabled" if update["disabled"] else "admin.user_enabled",
+                request=request, actor=admin,
+                target_type="user", target_id=user_id, target_label=target.get("email"),
+            )
+        if body.reset_2fa:
+            await audit("admin.user_2fa_reset", request=request, actor=admin,
+                        target_type="user", target_id=user_id,
+                        target_label=target.get("email"))
+        if "name" in update or "role" in update or "must_change_password" in update:
+            await audit("admin.user_updated", request=request, actor=admin,
+                        target_type="user", target_id=user_id,
+                        target_label=target.get("email"),
+                        metadata={k: update[k] for k in update.keys()
+                                  if k in {"name", "role", "must_change_password"}})
     refreshed = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0, "totp_secret": 0})
     return _public_user(refreshed)
 
 
 @api.post("/admin/users/{user_id}/reset-password")
-async def admin_reset_password(user_id: str, body: AdminResetPasswordRequest,
+async def admin_reset_password(user_id: str, body: AdminResetPasswordRequest, request: Request,
                                admin=Depends(require_role("admin"))):
     target = await db.users.find_one({"id": user_id})
     if not target:
@@ -323,30 +407,38 @@ async def admin_reset_password(user_id: str, body: AdminResetPasswordRequest,
             "must_change_password": bool(body.must_change_password),
         }},
     )
+    await audit("admin.user_password_reset", request=request, actor=admin,
+                target_type="user", target_id=user_id, target_label=target.get("email"),
+                metadata={"force_change": bool(body.must_change_password)})
     return {"ok": True}
 
 
 @api.delete("/admin/users/{user_id}")
-async def delete_user(user_id: str, admin=Depends(require_role("admin"))):
+async def delete_user(user_id: str, request: Request, admin=Depends(require_role("admin"))):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
     target = await db.users.find_one({"id": user_id})
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    # Safety: prevent removing the last enabled admin
     if target.get("role") == "admin":
         remaining = await db.users.count_documents({"role": "admin", "disabled": {"$ne": True}, "id": {"$ne": user_id}})
         if remaining == 0:
             raise HTTPException(status_code=400, detail="No puedes eliminar el último administrador activo")
     await db.users.delete_one({"id": user_id})
+    await audit("admin.user_deleted", request=request, actor=admin,
+                target_type="user", target_id=user_id, target_label=target.get("email"),
+                metadata={"role": target.get("role")})
     return {"ok": True}
 
 
 # ====== SELF-SERVICE PASSWORD CHANGE ======
 @api.post("/auth/change-my-password")
-async def change_my_password(body: SelfChangePasswordRequest, user=Depends(get_current_user)):
+async def change_my_password(body: SelfChangePasswordRequest, request: Request,
+                             user=Depends(get_current_user)):
     full = await db.users.find_one({"id": user["id"]})
     if not full or not verify_password(body.current_password, full["password_hash"]):
+        await audit("auth.password_change_failed", request=request, actor=user,
+                    metadata={"reason": "wrong_current"}, success=False)
         raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
     if body.new_password == body.current_password:
         raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta a la actual")
@@ -355,6 +447,7 @@ async def change_my_password(body: SelfChangePasswordRequest, user=Depends(get_c
         {"$set": {"password_hash": hash_password(body.new_password),
                   "must_change_password": False}},
     )
+    await audit("auth.password_changed_self", request=request, actor=user)
     return {"ok": True}
 
 
@@ -391,7 +484,8 @@ async def pending_devices(admin=Depends(require_role("admin"))):
 
 
 @api.post("/devices/approve")
-async def approve_device(body: DeviceApproveRequest, admin=Depends(require_role("admin"))):
+async def approve_device(body: DeviceApproveRequest, request: Request,
+                         admin=Depends(require_role("admin"))):
     device = await db.devices.find_one({"device_id": body.device_id})
     if not device:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
@@ -405,15 +499,23 @@ async def approve_device(body: DeviceApproveRequest, admin=Depends(require_role(
         "id": str(uuid.uuid4()), "device_id": body.device_id,
         "type": "device_approved", "ts": now_iso(), "actor": admin["email"],
     })
+    await audit("device.approved", request=request, actor=admin,
+                target_type="device", target_id=body.device_id,
+                target_label=update.get("name") or device.get("name") or body.device_id,
+                metadata={"transporter_email": body.transporter_email})
     return {"ok": True}
 
 
 @api.post("/devices/reject")
-async def reject_device(body: DeviceRejectRequest, admin=Depends(require_role("admin"))):
+async def reject_device(body: DeviceRejectRequest, request: Request,
+                        admin=Depends(require_role("admin"))):
     await db.devices.update_one(
         {"device_id": body.device_id},
         {"$set": {"status": "rejected", "rejected_at": now_iso()}},
     )
+    await audit("device.rejected", request=request, actor=admin,
+                target_type="device", target_id=body.device_id,
+                target_label=body.device_id)
     return {"ok": True}
 
 
@@ -443,7 +545,8 @@ async def device_alerts(device_id: str, admin=Depends(require_role("admin"))):
 
 
 @api.post("/devices/secure-mode")
-async def toggle_secure_mode(body: ToggleHmacRequest, admin=Depends(require_role("admin"))):
+async def toggle_secure_mode(body: ToggleHmacRequest, request: Request,
+                             admin=Depends(require_role("admin"))):
     """Activar/desactivar modo seguro (HMAC obligatorio) por dispositivo."""
     res = await db.devices.update_one(
         {"device_id": body.device_id},
@@ -456,6 +559,9 @@ async def toggle_secure_mode(body: ToggleHmacRequest, admin=Depends(require_role
         "type": "secure_mode_changed", "ts": now_iso(), "actor": admin["email"],
         "value": bool(body.require_hmac),
     })
+    await audit("device.secure_mode_changed", request=request, actor=admin,
+                target_type="device", target_id=body.device_id, target_label=body.device_id,
+                metadata={"require_hmac": bool(body.require_hmac)})
     return {"ok": True, "require_hmac": bool(body.require_hmac)}
 
 
@@ -501,6 +607,10 @@ async def export_device(device_id: str, format: str = "csv", hours: int = 24,
             t = float(r["temperature"])
             writer.writerow([r["ts"], device_id, device.get("name", ""),
                              f"{t:.2f}", _classify(t)])
+        await audit("export.csv", request=request, actor=admin,
+                    target_type="device", target_id=device_id,
+                    target_label=device.get("name") or device_id,
+                    metadata={"hours": hours, "rows": len(readings)})
         return StreamingResponse(
             iter([buf.getvalue()]),
             media_type="text/csv",
@@ -628,10 +738,107 @@ async def export_device(device_id: str, format: str = "csv", hours: int = 24,
 
     doc.build(elements)
     pdf_buf.seek(0)
+    await audit("export.pdf", request=request, actor=admin,
+                target_type="device", target_id=device_id,
+                target_label=device.get("name") or device_id,
+                metadata={"hours": hours, "rows": len(readings),
+                          "alerts_in_period": len(alerts)})
     return StreamingResponse(
         pdf_buf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname_base}.pdf"'},
+    )
+
+
+# ====== AUDIT LOG QUERY ======
+@api.get("/admin/audit")
+async def list_audit(
+    request: Request,
+    limit: int = 100,
+    action: Optional[str] = None,
+    actor_email: Optional[str] = None,
+    target_type: Optional[str] = None,
+    q: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    admin=Depends(require_role("admin")),
+):
+    """Lista de eventos de auditoría con filtros básicos."""
+    if limit <= 0 or limit > 500:
+        limit = 100
+    query: dict = {}
+    if action:
+        query["action"] = action
+    if actor_email:
+        query["actor_email"] = actor_email.lower().strip()
+    if target_type:
+        query["target_type"] = target_type
+    ts_q: dict = {}
+    if since:
+        ts_q["$gte"] = since
+    if until:
+        ts_q["$lte"] = until
+    if ts_q:
+        query["ts"] = ts_q
+    if q:
+        # case-insensitive contains across actor_email, action, target_label, ip
+        rx = {"$regex": q, "$options": "i"}
+        query["$or"] = [
+            {"actor_email": rx},
+            {"action": rx},
+            {"target_label": rx},
+            {"ip": rx},
+            {"target_id": rx},
+        ]
+    items = await db.audit_log.find(query, {"_id": 0}).sort("ts", -1).to_list(limit)
+    return items
+
+
+@api.get("/admin/audit/actions")
+async def audit_distinct_actions(admin=Depends(require_role("admin"))):
+    actions = await db.audit_log.distinct("action")
+    return sorted(actions)
+
+
+@api.get("/admin/audit/export")
+async def audit_export(
+    request: Request,
+    action: Optional[str] = None,
+    actor_email: Optional[str] = None,
+    target_type: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    admin=Depends(require_role("admin")),
+):
+    query: dict = {}
+    if action: query["action"] = action
+    if actor_email: query["actor_email"] = actor_email.lower().strip()
+    if target_type: query["target_type"] = target_type
+    ts_q: dict = {}
+    if since: ts_q["$gte"] = since
+    if until: ts_q["$lte"] = until
+    if ts_q: query["ts"] = ts_q
+    items = await db.audit_log.find(query, {"_id": 0}).sort("ts", -1).to_list(50000)
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ts", "actor_email", "actor_role", "action", "target_type",
+                "target_id", "target_label", "ip", "user_agent", "success", "metadata"])
+    import json as _json
+    for it in items:
+        w.writerow([
+            it.get("ts"), it.get("actor_email"), it.get("actor_role"),
+            it.get("action"), it.get("target_type"), it.get("target_id"),
+            it.get("target_label"), it.get("ip"), it.get("user_agent"),
+            it.get("success"),
+            _json.dumps(it.get("metadata") or {}, ensure_ascii=False),
+        ])
+    await audit("admin.audit_exported", request=request, actor=admin,
+                metadata={"rows": len(items)})
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="coldchain_audit.csv"'},
     )
 
 
@@ -643,11 +850,18 @@ async def list_alerts(active_only: bool = False, admin=Depends(require_role("adm
 
 
 @api.post("/alerts/{alert_id}/ack")
-async def ack_alert(alert_id: str, admin=Depends(require_role("admin"))):
+async def ack_alert(alert_id: str, request: Request, admin=Depends(require_role("admin"))):
+    alert = await db.alerts.find_one({"id": alert_id})
     await db.alerts.update_one(
         {"id": alert_id},
         {"$set": {"acknowledged": True, "acknowledged_by": admin["email"], "acknowledged_at": now_iso()}},
     )
+    if alert:
+        await audit("alert.acknowledged", request=request, actor=admin,
+                    target_type="alert", target_id=alert_id,
+                    target_label=alert.get("device_id"),
+                    metadata={"severity": alert.get("severity"),
+                              "temperature": alert.get("temperature")})
     return {"ok": True}
 
 
@@ -880,6 +1094,10 @@ async def ensure_indexes():
     await db.devices.create_index("device_id", unique=True)
     await db.readings.create_index([("device_id", 1), ("ts", -1)])
     await db.alerts.create_index([("device_id", 1), ("ts", -1)])
+    await db.audit_log.create_index([("ts", -1)])
+    await db.audit_log.create_index("action")
+    await db.audit_log.create_index("actor_email")
+    await db.audit_log.create_index("target_type")
 
 
 @app.on_event("startup")

@@ -10,6 +10,7 @@ import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, ShieldAle
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import UsersManager from "../components/UsersManager";
+import AuditLog from "../components/AuditLog";
 
 function KPI({ label, value, hint, icon: Icon, accent = "sky", testid }) {
   const accents = {
@@ -159,6 +160,7 @@ export default function AdminDashboard() {
             <TabsTrigger value="devices" data-testid="tab-devices">{t("devices")}</TabsTrigger>
             <TabsTrigger value="alerts" data-testid="tab-alerts">{t("alerts")} {activeAlerts.length > 0 && <span className="ml-1.5 text-[10px] bg-rose-600 text-white rounded-full px-1.5">{activeAlerts.length}</span>}</TabsTrigger>
             <TabsTrigger value="users" data-testid="tab-users">{t("users")}</TabsTrigger>
+            <TabsTrigger value="audit" data-testid="tab-audit">{t("audit")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="devices" className="mt-4">
@@ -253,6 +255,10 @@ export default function AdminDashboard() {
 
           <TabsContent value="users" className="mt-4">
             <UsersManager />
+          </TabsContent>
+
+          <TabsContent value="audit" className="mt-4">
+            <AuditLog />
           </TabsContent>
         </Tabs>
       </main>
