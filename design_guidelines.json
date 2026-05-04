@@ -1,0 +1,113 @@
+{
+  "project_name": "Cold Chain Medical Logistics Dashboard",
+  "theme": "Light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) - Medical Adaptation",
+  "design_philosophy": {
+    "core_principles": [
+      "Authority, Clarity, Truth - Data must be unambiguous.",
+      "Medical Precision - Crisp borders, high contrast, sterile but approachable surfaces.",
+      "Control Room Layout - Dense, scanable grid structures that prioritize critical alerts.",
+      "Flat Solid Surfaces - No glassmorphism for health data to prevent visual refraction."
+    ],
+    "mood": "Professional, Medical, Urgent but Controlled"
+  },
+  "typography": {
+    "font_families": {
+      "heading": "Work Sans, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "IBM Plex Mono, monospace"
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900",
+      "h2": "text-2xl sm:text-3xl font-medium tracking-tight text-slate-800",
+      "h3": "text-xl sm:text-2xl font-medium tracking-tight text-slate-800",
+      "kpi_value": "text-4xl sm:text-5xl font-mono font-medium tracking-tighter text-slate-900",
+      "body": "text-base text-slate-600 leading-relaxed",
+      "label": "text-xs font-semibold uppercase tracking-[0.2em] text-slate-500"
+    }
+  },
+  "colors": {
+    "background": "bg-slate-50",
+    "surface": "bg-white",
+    "borders": "border-slate-200",
+    "text_primary": "text-slate-900",
+    "text_secondary": "text-slate-600",
+    "brand_primary": "bg-sky-700",
+    "brand_primary_hover": "hover:bg-sky-800 hover:text-white",
+    "status": {
+      "safe": {
+        "bg": "bg-emerald-50",
+        "text": "text-emerald-700",
+        "border": "border-emerald-200",
+        "indicator": "bg-emerald-500"
+      },
+      "warning": {
+        "bg": "bg-amber-50",
+        "text": "text-amber-700",
+        "border": "border-amber-200",
+        "indicator": "bg-amber-500"
+      },
+      "critical": {
+        "bg": "bg-rose-50",
+        "text": "text-rose-700",
+        "border": "border-rose-200",
+        "indicator": "bg-rose-600"
+      },
+      "pending": {
+        "bg": "bg-slate-100",
+        "text": "text-slate-700",
+        "border": "border-slate-300",
+        "indicator": "bg-slate-500"
+      }
+    }
+  },
+  "spacing_and_layout": {
+    "grid_system": "Control Room Grid (Dense, Data-Heavy). Use grid-cols-1 md:grid-cols-4 gap-4 or gap-6.",
+    "containers": "Flat background (bg-white), 1px subtle border (border-slate-200), minimal shadow (shadow-sm). Max border-radius: rounded-lg (8px).",
+    "padding": "Generous internal padding for cards (p-6) to avoid text collision with borders."
+  },
+  "component_rules": {
+    "buttons": "Flat, crisp edges (rounded-md). Explicit hover states with higher contrast.",
+    "tables": "Use Shadcn Table. Zebra striping or subtle border-b on rows. Numeric data MUST use font-mono for vertical alignment.",
+    "charts": "Use Recharts (Shadcn Chart). MUST highlight the 2-8°C optimal range using a ReferenceArea with a subtle green tint (e.g., fill='#10B981' fillOpacity={0.1}). Line charts for temperature history.",
+    "badges": "Use for device states. Small text, pill shape, high contrast colors based on status.",
+    "alerts": "Use Shadcn Alert for thermal alerts. Critical alerts should have a solid 1px red border and light red background.",
+    "icons": "Use lucide-react (default). Stroke width 1.5 for a clean, technical look."
+  },
+  "pages_and_views": {
+    "login": {
+      "layout": "Split screen. Left: Form centered in clean white container. Right: High-quality lab/warehouse image with a subtle medical blue tint overlay.",
+      "features": ["Email/Password login", "TOTP 2FA step", "First-time login password change modal"]
+    },
+    "admin_dashboard": {
+      "layout": "Top Navigation (Logo, Language ES/EN Selector, User Dropdown). Main content: KPI Cards row -> Pending Devices row -> Active Alerts List -> Device Grid/Table.",
+      "kpi_cards": "4 columns: Total Active, Total Inactive, Pending Approvals, Critical Alerts."
+    },
+    "device_detail": {
+      "layout": "Header with Device ID and Current Status/Temperature. Large Recharts historical line graph (showing last N hours) with 2-8°C safe zone highlighted. Event log/Alerts table below."
+    },
+    "transporter_view": {
+      "layout": "Centered, focused layout. Enter Device Password -> View Single Device Status (Current Temp, Target Range, Simple Graph). Minimalist, high contrast for mobile viewing in trucks."
+    }
+  },
+  "media": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1716643863806-989dd76ae093?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwyfHxjbGVhbiUyMGxhYm9yYXRvcnklMjB3YXJlaG91c2V8ZW58MHx8fHwxNzc3OTA1ODUyfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Clean laboratory/warehouse setting. To be used on the right side of the split-screen login."
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure APCA/WCAG AA compliance. Dark text on light backgrounds.",
+    "testing": "All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='login-submit', data-testid='kpi-active-devices')."
+  },
+  "instructions_to_main_agent": [
+    "Install lucide-react and recharts.",
+    "Apply IBM Plex Sans (body) and Work Sans (headings) via Google Fonts in index.html.",
+    "Implement language selector (ES/EN) in the top nav using React Context or i18next.",
+    "Build the 2FA enrollment modal with a mock QR code display (can be a generic SVG or a hardcoded image for now).",
+    "Create the device pending approval flow: List pending devices -> Admin clicks approve -> status changes to active.",
+    "In the device details chart, draw a ReferenceArea between y=2 and y=8 to visually indicate the safe cold-chain zone.",
+    "Use mock data for the 10-second polling simulation (the actual hardware POST /api/temperatura can be mocked via a frontend setInterval that updates a global state/context for the demo).",
+    "Ensure the Transporter view is completely isolated. They just enter the hardware password and see that one specific device's temp."
+  ]
+}
