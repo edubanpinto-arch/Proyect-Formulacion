@@ -281,11 +281,22 @@ async def update_user(user_id: str, body: UpdateUserRequest, admin=Depends(requi
     if body.name is not None:
         update["name"] = body.name
     if body.role is not None:
+        if target["id"] == admin["id"] and body.role != admin["role"]:
+            raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol")
         update["role"] = body.role
     if body.disabled is not None:
         # Cannot disable yourself
         if target["id"] == admin["id"] and body.disabled:
             raise HTTPException(status_code=400, detail="No puedes deshabilitar tu propia cuenta")
+        # Cannot disable the last enabled admin
+        if body.disabled and target.get("role") == "admin" and not target.get("disabled"):
+            remaining = await db.users.count_documents({
+                "role": "admin",
+                "disabled": {"$ne": True},
+                "id": {"$ne": target["id"]},
+            })
+            if remaining == 0:
+                raise HTTPException(status_code=400, detail="No puedes deshabilitar el último administrador activo")
         update["disabled"] = bool(body.disabled)
     if body.must_change_password is not None:
         update["must_change_password"] = bool(body.must_change_password)
