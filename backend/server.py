@@ -574,7 +574,7 @@ def _classify(t: float) -> str:
 
 
 @api.get("/devices/{device_id}/export")
-async def export_device(device_id: str, format: str = "csv", hours: int = 24,
+async def export_device(device_id: str, request: Request, format: str = "csv", hours: int = 24,
                         admin=Depends(require_role("admin"))):
     """Exporta el histórico (CSV o PDF) del dispositivo en las últimas `hours` horas."""
     if format not in ("csv", "pdf"):
