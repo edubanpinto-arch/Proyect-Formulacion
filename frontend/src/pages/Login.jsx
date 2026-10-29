@@ -13,7 +13,7 @@ import { toast } from "sonner";
 const HERO_IMG = "https://images.unsplash.com/photo-1716643863806-989dd76ae093?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwyfHxjbGVhbiUyMGxhYm9yYXRvcnklMjB3YXJlaG91c2V8ZW58MHx8fHwxNzc3OTA1ODUyfDA&ixlib=rb-4.1.0&q=85";
 
 export default function Login() {
-  const { setSession, refresh } = useAuth();
+  const { user, setUser, setSession, refresh } = useAuth();
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
 
@@ -27,14 +27,22 @@ export default function Login() {
   const [newPwd2, setNewPwd2] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const finish = async (token) => {
+  // If already authenticated, redirect immediately
+  React.useEffect(() => {
+    if (user) {
+      const target = user.role === "admin" ? "/dashboard" : "/transporter";
+      navigate(target, { replace: true });
+    }
+  }, [user, navigate]);
+
+  const handleSuccess = (token, userObj) => {
     if (token) localStorage.setItem("cc_token", token);
-    await refresh();
-    // refresh() will set user; navigate based on role via root effect
-    setTimeout(() => {
-      const me = JSON.parse(localStorage.getItem("cc_user") || "null");
-      navigate("/", { replace: true });
-    }, 50);
+    if (userObj) {
+      localStorage.setItem("cc_user", JSON.stringify(userObj));
+      setUser(userObj);
+    }
+    const target = userObj?.role === "admin" ? "/dashboard" : "/transporter";
+    navigate(target, { replace: true });
   };
 
   const submitLogin = async (e) => {
@@ -53,9 +61,13 @@ export default function Login() {
         setTempToken(data.temp_token);
         setStep("verify_2fa");
       } else if (data.step === "ok") {
-        if (data.access_token) localStorage.setItem("cc_token", data.access_token);
-        await refresh();
-        navigate("/", { replace: true });
+        if (data.user) {
+          handleSuccess(data.access_token, data.user);
+        } else {
+          if (data.access_token) localStorage.setItem("cc_token", data.access_token);
+          const u = await refresh();
+          if (u) handleSuccess(data.access_token, u);
+        }
       }
     } catch (err) {
       toast.error(formatErr(err.response?.data?.detail, t("invalid_credentials")));
@@ -85,9 +97,13 @@ export default function Login() {
         setEnrollData({ secret: data.secret, qr: data.qr_data_url });
         setStep("enroll_2fa");
       } else if (data.step === "ok") {
-        if (data.access_token) localStorage.setItem("cc_token", data.access_token);
-        await refresh();
-        navigate("/", { replace: true });
+        if (data.user) {
+          handleSuccess(data.access_token, data.user);
+        } else {
+          if (data.access_token) localStorage.setItem("cc_token", data.access_token);
+          const u = await refresh();
+          if (u) handleSuccess(data.access_token, u);
+        }
       }
     } catch (err) {
       toast.error(formatErr(err.response?.data?.detail));
@@ -99,9 +115,13 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await api.post("/auth/2fa/enroll-verify", { temp_token: tempToken, code });
-      if (data.access_token) localStorage.setItem("cc_token", data.access_token);
-      await refresh();
-      navigate("/", { replace: true });
+      if (data.user) {
+        handleSuccess(data.access_token, data.user);
+      } else {
+        if (data.access_token) localStorage.setItem("cc_token", data.access_token);
+        const u = await refresh();
+        if (u) handleSuccess(data.access_token, u);
+      }
     } catch (err) {
       toast.error(formatErr(err.response?.data?.detail, t("wrong_code")));
     } finally { setLoading(false); }
@@ -112,9 +132,13 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await api.post("/auth/2fa/verify", { temp_token: tempToken, code });
-      if (data.access_token) localStorage.setItem("cc_token", data.access_token);
-      await refresh();
-      navigate("/", { replace: true });
+      if (data.user) {
+        handleSuccess(data.access_token, data.user);
+      } else {
+        if (data.access_token) localStorage.setItem("cc_token", data.access_token);
+        const u = await refresh();
+        if (u) handleSuccess(data.access_token, u);
+      }
     } catch (err) {
       toast.error(formatErr(err.response?.data?.detail, t("wrong_code")));
     } finally { setLoading(false); }

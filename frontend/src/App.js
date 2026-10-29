@@ -11,25 +11,52 @@ import "./App.css";
 
 function Protected({ children, role }) {
   const { user } = useAuth();
-  if (user === null) {
+  
+  const currentUser = user || (() => {
+    try {
+      const raw = localStorage.getItem("cc_user");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const token = localStorage.getItem("cc_token");
+
+  if (!token && !currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!currentUser) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-slate-500 mono">Cargando…</div>
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
-  if (role && user.role !== role) {
-    return <Navigate to={user.role === "admin" ? "/dashboard" : "/transporter"} replace />;
+
+  if (role && currentUser.role !== role) {
+    return <Navigate to={currentUser.role === "admin" ? "/dashboard" : "/transporter"} replace />;
   }
+
   return children;
 }
 
 function RootRedirect() {
   const { user } = useAuth();
-  if (user === null) return null;
-  if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === "admin" ? "/dashboard" : "/transporter"} replace />;
+  const currentUser = user || (() => {
+    try {
+      const raw = localStorage.getItem("cc_user");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const token = localStorage.getItem("cc_token");
+
+  if (!token && !currentUser) return <Navigate to="/login" replace />;
+  if (!currentUser) return null;
+  return <Navigate to={currentUser.role === "admin" ? "/dashboard" : "/transporter"} replace />;
 }
 
 export default function App() {
