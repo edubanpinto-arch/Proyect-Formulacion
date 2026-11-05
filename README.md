@@ -13,7 +13,47 @@ Plataforma web para monitorear y gestionar la cadena de frío de biológicos (va
 - **Exportación** de lecturas por dispositivo en **CSV** y **PDF**.
 - **Gestión de usuarios**: crear, deshabilitar, restablecer contraseña y cambio de contraseña propio.
 - **Auditoría**: registro de quién hizo qué, cuándo y desde qué IP.
+- **Alertas por correo (Gmail)**: aviso a los administradores activos y al transportador asignado cuando un dispositivo sale del rango (advertencia o crítico) y otro cuando vuelve a la normalidad.
 - Interfaz en **Español / Inglés**.
+
+## Diagrama de contexto (arquitectura)
+
+```mermaid
+flowchart LR
+    subgraph Campo["Transporte / Campo"]
+        S["Sensor DS18B20"] -- OneWire GPIO 4 --> E["ESP32<br/>(firmware HMAC)"]
+    end
+
+    subgraph Servidor["Servidor"]
+        API["Backend FastAPI<br/>/api/*<br/>JWT · 2FA · HMAC+Nonce<br/>Alertas · Auditoría · Exportación"]
+        DB[("MongoDB<br/>users · devices · readings<br/>alerts · audit_log")]
+        API <--> DB
+    end
+
+    WEB["Frontend React<br/>(Dashboard)"]
+    ADM(["Administrador<br/>contraseña + 2FA"])
+    TRA(["Transportador<br/>contraseña + clave del dispositivo"])
+    TOTP["App autenticadora<br/>Google Authenticator / Authy"]
+    GM["Gmail SMTP"]
+    INBOX(["Bandeja de correo<br/>admins + transportador"])
+
+    E -- "POST /api/temperatura<br/>HTTPS JSON (firma HMAC)" --> API
+    ADM --> WEB
+    TRA --> WEB
+    WEB -- "REST /api (JWT)" --> API
+    ADM -. código TOTP .- TOTP
+    API -- "alerta fuera de rango /<br/>vuelta a la normalidad" --> GM --> INBOX
+    API -- "CSV / PDF" --> WEB
+```
+
+| Actor / Componente | Rol |
+|--------------------|-----|
+| **ESP32 + DS18B20** | Mide la temperatura y la envía a la API cada pocos segundos (opcionalmente firmada con HMAC). |
+| **Backend FastAPI** | Valida dispositivos, guarda lecturas, genera alertas, envía correos, registra auditoría y exporta reportes. |
+| **MongoDB** | Persistencia de usuarios, dispositivos, lecturas, alertas y auditoría. |
+| **Frontend React** | Dashboard para administradores y transportadores. |
+| **Gmail SMTP** | Envío de los avisos por correo. |
+| **App autenticadora** | Genera el código 2FA de los administradores. |
 
 ## Tecnologías
 
@@ -59,7 +99,11 @@ CORS_ORIGINS=http://localhost:3000
 JWT_SECRET=una_clave_larga_y_aleatoria
 ADMIN_EMAIL=admin@ejemplo.com
 ADMIN_PASSWORD=cambiar_esta_clave
+GMAIL_USER=tu_cuenta@gmail.com
+GMAIL_APP_PASSWORD=contraseña_de_aplicacion_de_16_caracteres
 ```
+
+> **Correo (opcional):** `GMAIL_APP_PASSWORD` no es tu contraseña normal de Gmail. Actívala en tu cuenta de Google: *Seguridad → Verificación en dos pasos (activada) → Contraseñas de aplicaciones*. Si no configuras estas dos variables, la app funciona igual pero no envía correos. Puedes probar el envío desde el panel: **Usuarios → Alertas por correo → Enviar correo de prueba**.
 
 Iniciar el servidor:
 
@@ -151,3 +195,5 @@ POST /api/temperatura
 | POST | `/api/devices/{id}/secure-mode` | Activar/desactivar Modo Seguro |
 | GET | `/api/admin/users` | Gestión de usuarios |
 | GET | `/api/admin/audit` | Registro de auditoría |
+| GET | `/api/admin/email/status` | Estado de la configuración de correo |
+| POST | `/api/admin/email/test` | Enviar correo de prueba al administrador |

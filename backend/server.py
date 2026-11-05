@@ -21,6 +21,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
 import auth as auth_mod
+import email_alerts
 from auth import (
     hash_password, verify_password, create_access_token, create_temp_token,
     decode_token, totp_verify, totp_provisioning_uri, generate_totp_secret,
@@ -51,6 +52,7 @@ TEMP_MAX = 8.0
 WARN_LOW = 2.5
 WARN_HIGH = 7.5
 INACTIVE_AFTER_SECONDS = 60  # device considered inactive if no reading for 60s
+STATE_RANK = {"normal": 0, "warning": 1, "critical": 2}
 
 
 # ====== AUDIT LOG ======
@@ -1003,7 +1005,61 @@ async def ingest_temperature(body: TemperatureIngest):
             "acknowledged": False,
         })
 
+    new_state = sev or "normal"
+    old_state = device.get("alert_state", "normal")
+    if new_state != old_state:
+        await db.devices.update_one({"device_id": body.deviceId}, {"$set": {"alert_state": new_state}})
+        if STATE_RANK[new_state] > STATE_RANK[old_state] or new_state == "normal":
+            asyncio.create_task(notify_alert_email(device, new_state, t, ts))
+
     return {"ok": True, "status": "active", "alert": sev}
+
+
+async def alert_recipients(device: dict) -> list:
+    admins = await db.users.find({"role": "admin", "disabled": {"$ne": True}}, {"_id": 0, "email": 1}).to_list(100)
+    emails = {a["email"] for a in admins}
+    t_email = device.get("transporter_email")
+    if t_email and await db.users.find_one({"email": t_email, "role": "transporter", "disabled": {"$ne": True}}):
+        emails.add(t_email)
+    return sorted(emails)
+
+
+async def notify_alert_email(device: dict, state: str, temperature: float, ts: str):
+    device_id = device["device_id"]
+    if not email_alerts.is_configured():
+        logger.warning("Email alerts skipped: GMAIL_USER / GMAIL_APP_PASSWORD not configured")
+        return
+    recipients = await alert_recipients(device)
+    subject, html = email_alerts.build_email(state, device_id, device.get("name") or device_id, temperature, ts)
+    try:
+        await email_alerts.send_alert_email(recipients, subject, html)
+        await audit("alert.email_sent", actor_email="system", target_type="device", target_id=device_id,
+                    target_label=device.get("name"), metadata={"state": state, "recipients": recipients})
+    except Exception as e:
+        logger.error(f"Email alert failed for {device_id}: {e}")
+        await audit("alert.email_failed", actor_email="system", target_type="device", target_id=device_id,
+                    target_label=device.get("name"), metadata={"state": state, "error": str(e)[:200]},
+                    success=False)
+
+
+@api.get("/admin/email/status")
+async def email_status(admin=Depends(require_role("admin"))):
+    return {"configured": email_alerts.is_configured(), "sender": os.environ.get("GMAIL_USER")}
+
+
+@api.post("/admin/email/test")
+async def email_test(request: Request, admin=Depends(require_role("admin"))):
+    if not email_alerts.is_configured():
+        raise HTTPException(status_code=400, detail="Correo no configurado (GMAIL_USER / GMAIL_APP_PASSWORD)")
+    subject, html = email_alerts.build_email("normal", "PRUEBA", "Correo de prueba", 5.0, now_iso())
+    try:
+        await email_alerts.send_alert_email([admin["email"]], "[PRUEBA] " + subject, html)
+    except Exception as e:
+        logger.error(f"Test email failed: {e}")
+        await audit("alert.email_test", request=request, actor=admin, success=False, metadata={"error": str(e)[:200]})
+        raise HTTPException(status_code=502, detail=f"No se pudo enviar el correo: {str(e)[:150]}")
+    await audit("alert.email_test", request=request, actor=admin)
+    return {"ok": True, "to": admin["email"]}
 
 
 # ====== TRANSPORTER VIEW ======
