@@ -92,6 +92,37 @@ Abrir http://localhost:3000. En el primer inicio de sesión el administrador deb
 
 ### 3. Conectar el ESP32
 
+#### Diagrama de conexión DS18B20 → ESP32
+
+El firmware usa el pin **GPIO 4** como bus OneWire (`ONE_WIRE_BUS = 4`).
+
+```
+        DS18B20 (sonda)                      ESP32 DevKit
+   ┌──────────────────────┐
+   │  Rojo     (VDD)  ────┼──────────┬───────── 3V3
+   │                      │          │
+   │                      │       [ 4.7 kΩ ]   ← resistencia pull-up
+   │                      │          │
+   │  Amarillo (DATA) ────┼──────────┴───────── GPIO 4
+   │                      │
+   │  Negro    (GND)  ────┼──────────────────── GND
+   └──────────────────────┘
+```
+
+| Cable DS18B20 | Función | Pin ESP32 |
+|---------------|---------|-----------|
+| Rojo | Alimentación (VDD) | **3V3** |
+| Amarillo (a veces blanco) | Datos (DQ) | **GPIO 4** |
+| Negro | Tierra | **GND** |
+
+Notas:
+- La **resistencia de 4.7 kΩ entre DATA y 3V3 es obligatoria**; sin ella el sensor devuelve `-127 °C` o `85 °C`.
+- Alimentar con **3.3 V** (no 5 V) para no exceder el nivel lógico del ESP32.
+- En la versión TO-92 (encapsulado tipo transistor), con la cara plana hacia ti: pines **GND – DATA – VDD** de izquierda a derecha.
+- Librerías necesarias en Arduino IDE: **OneWire** y **DallasTemperature**.
+- Para usar otro pin, cambia `ONE_WIRE_BUS` en `ESP32_firmware_HMAC.ino`.
+
+#### Configuración del firmware
 1. En el firmware, configurar el WiFi y la URL del servidor usando la IP de la PC (no `localhost`), por ejemplo:
    `http://192.168.1.50:8001/api/temperatura`
 2. El ESP32 y la PC deben estar en la misma red, con el puerto **8001** permitido en el firewall.
