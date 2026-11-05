@@ -11,7 +11,6 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import UsersManager from "../components/UsersManager";
 import AuditLog from "../components/AuditLog";
-import EmailAlertsCard from "../components/EmailAlertsCard";
 
 function KPI({ label, value, hint, icon: Icon, accent = "sky", testid }) {
   const accents = {
@@ -254,8 +253,7 @@ export default function AdminDashboard() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="users" className="mt-4 space-y-4">
-            <EmailAlertsCard />
+          <TabsContent value="users" className="mt-4">
             <UsersManager />
           </TabsContent>
 

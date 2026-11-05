@@ -35,9 +35,13 @@ Plataforma de monitoreo de cadena de frío (2°C – 8°C) para biológicos. Har
 - Seeds: admin `edubanpinto@gmail.com / 1234567890` (must_change_password=true) y transportador demo `transportador@coldchain.com / transport123`
 - Tests: 24/24 backend pytest + Playwright frontend ✅
 
+## Docs (Nov 2026)
+- README.md en español: descripción, ejecución local (Windows/Linux), diagrama de conexión DS18B20→ESP32 (GPIO 4 + pull-up 4.7kΩ), diagrama de contexto Mermaid de la arquitectura.
+- Alertas por correo (Gmail SMTP) se implementaron y luego se RETIRARON a pedido del usuario. No reintroducir sin que lo pida.
+
 ## Backlog / Next Up
 - **P1:** Rate limiting / brute-force lockout en `/api/auth/login`
-- **P1:** Notificaciones push browser (web push) o email vía Resend para alertas críticas
+- **P1:** Notificaciones push browser (web push)
 - **P2:** Endpoint protegido del ESP32 con HMAC + nonce (mitigar replay)
 - **P2:** Histórico exportable CSV/PDF de un dispositivo
 - **P2:** Mapa con ubicación GPS del dispositivo (si el ESP32 envía coordenadas)
