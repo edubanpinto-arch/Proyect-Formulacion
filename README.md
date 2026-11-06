@@ -109,6 +109,7 @@ Al arrancar se crea automáticamente el administrador definido en `ADMIN_EMAIL` 
 cd frontend
 yarn install
 ```
+Si la terminal no reconoce yarn como comando usar `npm install -g yarn`.
 
 Crear `frontend/.env`:
 
