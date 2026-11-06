@@ -83,8 +83,6 @@ source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> Si `pip` falla con `emergentintegrations` o `uvloop`, elimina esas líneas de `requirements.txt` (no son necesarias para este proyecto).
-
 Crear `backend/.env`:
 
 ```
