@@ -115,6 +115,9 @@ async def login(body: LoginRequest, response: Response, request: Request):
                     metadata={"reason": "disabled"}, success=False)
         raise HTTPException(status_code=403, detail="Usuario deshabilitado. Contacte al administrador.")
 
+    if user.get("role") == "transporter":
+        await db.users.update_one({"id": user["id"]}, {"$set": {"unlocked_devices": []}})
+
     # First step: must change password
     if user.get("must_change_password"):
         await audit("auth.login_step", request=request, actor=user,
@@ -492,8 +495,8 @@ async def approve_device(body: DeviceApproveRequest, request: Request,
     update = {"status": "approved", "approved_at": now_iso(), "approved_by": admin["email"]}
     if body.name:
         update["name"] = body.name
-    if body.transporter_email:
-        update["transporter_email"] = body.transporter_email.lower().strip()
+    if body.transporter_email is not None:
+        update["transporter_email"] = body.transporter_email.lower().strip() or None
     await db.devices.update_one({"device_id": body.device_id}, {"$set": update})
     await db.events.insert_one({
         "id": str(uuid.uuid4()), "device_id": body.device_id,
@@ -866,6 +869,18 @@ async def ack_alert(alert_id: str, request: Request, admin=Depends(require_role(
     return {"ok": True}
 
 
+@api.post("/devices/{device_id}/alerts/ack-all")
+async def ack_all_device_alerts(device_id: str, request: Request, admin=Depends(require_role("admin"))):
+    res = await db.alerts.update_many(
+        {"device_id": device_id, "acknowledged": False},
+        {"$set": {"acknowledged": True, "acknowledged_by": admin["email"], "acknowledged_at": now_iso()}},
+    )
+    await audit("alert.acknowledged_all", request=request, actor=admin,
+                target_type="device", target_id=device_id, target_label=device_id,
+                metadata={"count": res.modified_count})
+    return {"ok": True, "count": res.modified_count}
+
+
 # ====== STATS ======
 @api.get("/stats/summary")
 async def stats_summary(admin=Depends(require_role("admin"))):
@@ -1012,6 +1027,9 @@ async def transporter_access(body: TransporterAccessRequest, user=Depends(requir
     """A transporter unlocks a device by entering its hardware password.
     We find a device whose password matches AND is assigned to this transporter (or any approved if not yet assigned)."""
     candidates = await db.devices.find({"status": "approved"}).to_list(500)
+    me = await db.users.find_one({"id": user["id"]}, {"_id": 0, "unlocked_devices": 1})
+    already = set((me or {}).get("unlocked_devices") or [])
+    candidates.sort(key=lambda d: d["device_id"] in already)
     matched = None
     for d in candidates:
         if verify_password(body.device_password, d.get("device_password_hash", "")):
@@ -1031,6 +1049,7 @@ async def transporter_access(body: TransporterAccessRequest, user=Depends(requir
         )
         matched["transporter_email"] = user["email"]
 
+    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"unlocked_devices": matched["device_id"]}})
     # Issue a per-session "device unlock" token in cookie? For simplicity, return device_id and rely on it
     matched["live_status"] = await _device_status(matched)
     matched.pop("device_password_hash", None)
@@ -1038,12 +1057,29 @@ async def transporter_access(body: TransporterAccessRequest, user=Depends(requir
     return matched
 
 
+@api.get("/transporter/devices")
+async def transporter_devices(user=Depends(require_role("transporter"))):
+    me = await db.users.find_one({"id": user["id"]}, {"_id": 0, "unlocked_devices": 1})
+    unlocked = (me or {}).get("unlocked_devices") or []
+    assigned = await db.devices.find(
+        {"status": "approved", "transporter_email": user["email"]},
+        {"_id": 0, "device_password_hash": 0},
+    ).to_list(500)
+    connected = []
+    for d in assigned:
+        if d["device_id"] in unlocked:
+            d["live_status"] = await _device_status(d)
+            connected.append(d)
+    return {"devices": connected, "assigned_total": len(assigned)}
+
+
 @api.get("/transporter/device/{device_id}")
 async def transporter_device(device_id: str, user=Depends(require_role("transporter"))):
     d = await db.devices.find_one({"device_id": device_id}, {"_id": 0, "device_password_hash": 0})
     if not d or d.get("status") != "approved":
         raise HTTPException(status_code=404, detail="No encontrado")
-    if d.get("transporter_email") != user["email"]:
+    me = await db.users.find_one({"id": user["id"]}, {"_id": 0, "unlocked_devices": 1})
+    if d.get("transporter_email") != user["email"] or device_id not in ((me or {}).get("unlocked_devices") or []):
         raise HTTPException(status_code=403, detail="No autorizado")
     d["live_status"] = await _device_status(d)
     readings = await db.readings.find({"device_id": device_id}, {"_id": 0}).sort("ts", -1).to_list(60)

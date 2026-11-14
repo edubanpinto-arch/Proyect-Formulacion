@@ -5,12 +5,13 @@ import { useI18n } from "../lib/i18n";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
-import { StatusBadge, TempBadge, SeverityBadge } from "../components/Badges";
+import { StatusBadge, TempBadge } from "../components/Badges";
 import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, ShieldAlert, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import UsersManager from "../components/UsersManager";
 import AuditLog from "../components/AuditLog";
+import AlertsPanel from "../components/AlertsPanel";
 
 function KPI({ label, value, hint, icon: Icon, accent = "sky", testid }) {
   const accents = {
@@ -83,11 +84,6 @@ export default function AdminDashboard() {
       loadAll();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
-  const ackAlert = async (id) => {
-    try { await api.post(`/alerts/${id}/ack`); loadAll(); }
-    catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
-  };
-
   const assignTransporter = async (deviceId, email) => {
     try {
       await api.post("/devices/approve", { device_id: deviceId, transporter_email: email });
@@ -216,41 +212,7 @@ export default function AdminDashboard() {
           </TabsContent>
 
           <TabsContent value="alerts" className="mt-4">
-            <Card className="p-0 overflow-hidden border-slate-200">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-[10px] uppercase tracking-[0.18em] text-slate-500 bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="text-left py-3 px-4">{t("severity")}</th>
-                      <th className="text-left py-3 px-4">{t("device_id")}</th>
-                      <th className="text-left py-3 px-4">{t("message")}</th>
-                      <th className="text-left py-3 px-4">{t("timestamp")}</th>
-                      <th className="text-right py-3 px-4">{t("actions")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {alerts.length === 0 && (
-                      <tr><td colSpan={5} className="py-10 text-center text-slate-400">{t("no_alerts")}</td></tr>
-                    )}
-                    {alerts.map((a) => (
-                      <tr key={a.id} className={`border-b border-slate-100 ${!a.acknowledged ? "" : "opacity-60"}`} data-testid={`alert-row-${a.id}`}>
-                        <td className="py-3 px-4"><SeverityBadge severity={a.severity} t={t} /></td>
-                        <td className="py-3 px-4 mono">{a.device_id}</td>
-                        <td className="py-3 px-4 text-slate-700">{a.message}</td>
-                        <td className="py-3 px-4 mono text-xs text-slate-600">{fmtTime(a.ts)}</td>
-                        <td className="py-3 px-4 text-right">
-                          {!a.acknowledged && (
-                            <Button size="sm" variant="outline" className="border-slate-200" onClick={() => ackAlert(a.id)} data-testid={`ack-${a.id}`}>
-                              {t("acknowledge")}
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
+            <AlertsPanel alerts={alerts} onChanged={loadAll} />
           </TabsContent>
 
           <TabsContent value="users" className="mt-4">
