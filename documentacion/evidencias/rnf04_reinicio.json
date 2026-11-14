@@ -1,0 +1,13 @@
+{
+  "rnf": "RNF-04",
+  "device_id": "TEST_RNF04_534824",
+  "confirmadas_200": 20,
+  "consultables_tras_reinicio": 20,
+  "porcentaje": 100.0,
+  "count_antes": 20,
+  "count_despues": 20,
+  "ts_antes": "2026-11-14T23:49:43.912749+00:00",
+  "ts_despues": "2026-11-14T23:50:26.422465+00:00",
+  "reinicio": "sudo supervisorctl restart mongodb backend (entorno Linux de vista previa)",
+  "cumple": true
+}

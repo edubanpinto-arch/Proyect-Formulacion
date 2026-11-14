@@ -1,0 +1,12 @@
+== Ejecución 1
+reset devices: 0 documentos TEST_ eliminados
+reset readings: 0 documentos TEST_ eliminados
+reset alerts: 0 documentos TEST_ eliminados
+reset events: 0 documentos TEST_ eliminados
+DEMO_ESP32_01: aprobado, 24 lecturas (clave Demo_Clave_01)
+DEMO_ESP32_02: aprobado, 24 lecturas (clave Demo_Clave_02)
+== Ejecución 2
+DEMO_ESP32_01: aprobado, 24 lecturas (clave Demo_Clave_01)
+DEMO_ESP32_02: aprobado, 24 lecturas (clave Demo_Clave_02)
+DEMO_ESP32_01 devices= 1 readings= 24
+DEMO_ESP32_02 devices= 1 readings= 24

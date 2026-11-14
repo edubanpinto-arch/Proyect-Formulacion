@@ -1,0 +1,35 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.18, pytest-9.0.3, pluggy-1.6.0 -- /root/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /app/backend
+plugins: anyio-4.13.0
+collecting ... collected 25 items
+
+tests/test_semana14_rf.py::TestRF01::test_registro_nuevo_queda_pendiente_sin_lectura PASSED [  4%]
+tests/test_semana14_rf.py::TestRF01::test_pendiente_no_persiste_lecturas PASSED [  8%]
+tests/test_semana14_rf.py::TestRF01::test_aprobado_persiste_y_se_recupera_desde_otra_conexion PASSED [ 12%]
+tests/test_semana14_rf.py::TestRF01::test_device_id_unico_con_registros_simultaneos PASSED [ 16%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload0] PASSED [ 20%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload1] PASSED [ 24%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload2] PASSED [ 28%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload3] PASSED [ 32%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload4] PASSED [ 36%]
+tests/test_semana14_rf.py::TestRF01::test_entrada_invalida_422_sin_registro[payload5] PASSED [ 40%]
+tests/test_semana14_rf.py::TestRF01::test_dispositivo_rechazado_403_sin_lectura PASSED [ 44%]
+tests/test_semana14_rf.py::TestRF01::test_consulta_dispositivo_inexistente_404 PASSED [ 48%]
+tests/test_semana14_rf.py::test_rnf01_password_invalida_rechazada_100 PASSED [ 52%]
+tests/test_semana14_rf.py::TestRNF02::test_firma_y_nonce PASSED          [ 56%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[1.9-critical] PASSED [ 60%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[2.0-warning] PASSED [ 64%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[2.5-warning] PASSED [ 68%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[5.0-None] PASSED [ 72%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[7.5-warning] PASSED [ 76%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[8.0-warning] PASSED [ 80%]
+tests/test_semana14_rf.py::test_rnf05_clasificacion_limites[8.1-critical] PASSED [ 84%]
+tests/test_semana14_rf.py::TestRF02::test_listar_y_reconocer PASSED      [ 88%]
+tests/test_semana14_rf.py::TestRF02::test_reconocer_inexistente_404 PASSED [ 92%]
+tests/test_semana14_rf.py::TestRF02::test_acceso_restringido PASSED      [ 96%]
+tests/test_semana14_rf.py::test_rnf06_inactivo_tras_60s PASSED           [100%]
+
+---- generated xml file: /app/documentacion/evidencias/pytest_semana14.xml -----
+======================== 25 passed in 76.93s (0:01:16) =========================

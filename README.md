@@ -62,8 +62,15 @@ flowchart LR
 ## Estructura
 
 ```
-backend/     API FastAPI (server.py, auth.py, models.py)
-frontend/    Aplicación React (src/pages, src/components)
+backend/
+  server.py        Capa API (endpoints FastAPI, autenticación, traducción de errores a HTTP)
+  services.py      Servicios de aplicación y reglas de negocio de RF-01 y RF-02
+  repositories.py  Capa de persistencia (consultas a MongoDB)
+  models.py        Contratos de entrada (Pydantic)
+  seed_demo.py     Datos de demostración idempotentes y reinicio de datos de prueba
+  tests/           Pruebas funcionales y scripts de RNF
+frontend/          Aplicación React (src/pages, src/components)
+documentacion/     Entregas del curso y evidencias de pruebas
 ESP32_firmware_HMAC.ino   Firmware de ejemplo para el ESP32
 ```
 
@@ -83,11 +90,11 @@ source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Crear `backend/.env`:
+Crear `backend/.env` (o copiar `backend/.env.example`):
 
 ```
 MONGO_URL=mongodb://localhost:27017
-DB_NAME=coldchain
+DB_NAME=coldchain_db
 CORS_ORIGINS=http://localhost:3000
 JWT_SECRET=una_clave_larga_y_aleatoria
 ADMIN_EMAIL=admin@ejemplo.com
@@ -185,3 +192,42 @@ POST /api/temperatura
 | POST | `/api/devices/{id}/secure-mode` | Activar/desactivar Modo Seguro |
 | GET | `/api/admin/users` | Gestión de usuarios |
 | GET | `/api/admin/audit` | Registro de auditoría |
+| GET | `/api/alerts?active_only=true` | Listar alertas (RF-02) |
+| POST | `/api/alerts/{id}/ack` | Reconocer alerta (RF-02) |
+| POST | `/api/devices/{id}/alerts/ack-all` | Reconocer todas las alertas de un dispositivo (RF-02) |
+
+Los contratos completos (entradas, respuestas y errores) están en `documentacion/ColdChain_Dashboard_Semana14_pruebas.md`.
+
+## Pruebas (Semana 14)
+
+Con el backend corriendo en `http://localhost:8001`, desde la carpeta `backend`:
+
+```bash
+# RF-01, RF-02 y RNF-01, 02, 05, 06 (25 pruebas, ~80 s)
+REACT_APP_BACKEND_URL=http://localhost:8001 pytest tests/test_semana14_rf.py -v
+#   Windows PowerShell: $env:REACT_APP_BACKEND_URL="http://localhost:8001"; pytest tests/test_semana14_rf.py -v
+
+# RNF-03: latencia p95 de 100 lecturas (umbral 500 ms)
+python tests/rnf03_latencia.py --base-url http://localhost:8001 --n 100 --out ../documentacion/evidencias/rnf03_latencia.json
+
+# RNF-04: persistencia tras reiniciar backend y MongoDB (dos fases)
+python tests/rnf04_reinicio.py antes   --base-url http://localhost:8001 --state ../documentacion/evidencias/rnf04_estado.json
+#   ...reiniciar uvicorn y MongoDB...
+python tests/rnf04_reinicio.py despues --base-url http://localhost:8001 --state ../documentacion/evidencias/rnf04_estado.json --out ../documentacion/evidencias/rnf04_reinicio.json
+
+# Reiniciar datos de prueba (borra TEST_*) y cargar dispositivos demo
+python seed_demo.py --reset
+```
+
+### Matriz RF-RNF (resultados del 2026-11-14)
+
+| RF / RNF | Calidad ISO/IEC 25010:2023 | Meta | Resultado | Evidencia |
+|----------|----------------------------|------|-----------|-----------|
+| RF-01 / RNF-01 | Seguridad / Autenticidad | 100 % de contraseñas inválidas rechazadas (401) sin guardar | Cumple (10/10) | `tests/test_semana14_rf.py` |
+| RF-01 / RNF-02 | Seguridad / Integridad | 100 % de HMAC inválido (401) y replay (409) rechazados | Cumple (5/5) | `tests/test_semana14_rf.py` |
+| RF-01 / RNF-03 | Eficiencia / Comportamiento temporal | p95 ≤ 500 ms en 100 solicitudes | Cumple (p95 = 270 ms) | `documentacion/evidencias/rnf03_latencia.json` |
+| RF-01 / RNF-04 | Fiabilidad / Recuperabilidad | 100 % de lecturas consultables tras reinicio | Cumple (20/20) | `documentacion/evidencias/rnf04_reinicio.json` |
+| RF-02 / RNF-05 | Adecuación funcional / Corrección | 7 valores límite clasificados correctamente | Cumple (7/7) | `tests/test_semana14_rf.py` |
+| RF-02 / RNF-06 | Fiabilidad / Ausencia de fallos | Inactivo tras más de 60 s sin lecturas | Cumple | `tests/test_semana14_rf.py` |
+
+Detalle completo, contratos y checklist: `documentacion/ColdChain_Dashboard_Semana14_pruebas.pdf`.

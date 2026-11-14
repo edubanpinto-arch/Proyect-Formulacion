@@ -75,10 +75,10 @@ class DeviceRejectRequest(BaseModel):
 
 
 class TemperatureIngest(BaseModel):
-    deviceId: str
-    devicePassword: str
-    temperature: float
-    nonce: Optional[int] = None
+    deviceId: str = Field(min_length=1, max_length=64)
+    devicePassword: str = Field(min_length=1, max_length=128)
+    temperature: float = Field(ge=-55, le=125)  # rango físico del DS18B20; -127 = sensor desconectado
+    nonce: Optional[int] = Field(default=None, ge=0)
     signature: Optional[str] = None
 
 

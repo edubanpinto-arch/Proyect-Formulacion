@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -34,6 +34,11 @@ from models import (
     DeviceApproveRequest, DeviceRejectRequest, TemperatureIngest,
     TransporterAccessRequest, ToggleHmacRequest, now_iso,
 )
+from repositories import DeviceRepository, ReadingRepository, AlertRepository, EventRepository
+from services import (
+    IngestionService, AlertService, DomainError, device_live_status,
+    TEMP_MIN, TEMP_MAX, WARN_LOW, WARN_HIGH,
+)
 
 logger = logging.getLogger("coldchain")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -45,12 +50,21 @@ db = client[os.environ["DB_NAME"]]
 app = FastAPI(title="ColdChain Dashboard")
 api = APIRouter(prefix="/api")
 
-# --- Constants ---
-TEMP_MIN = 2.0
-TEMP_MAX = 8.0
-WARN_LOW = 2.5
-WARN_HIGH = 7.5
-INACTIVE_AFTER_SECONDS = 60  # device considered inactive if no reading for 60s
+# --- Services (RF-01 / RF-02) ---
+device_repo = DeviceRepository(db)
+alert_service = AlertService(AlertRepository(db), device_repo)
+ingestion_service = IngestionService(device_repo, ReadingRepository(db), EventRepository(db), alert_service)
+
+
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError):
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled error on {request.method} {request.url.path}")
+    return JSONResponse(status_code=500, content={"detail": "Error interno del servidor."})
 
 
 # ====== AUDIT LOG ======
@@ -456,18 +470,7 @@ async def change_my_password(body: SelfChangePasswordRequest, request: Request,
 
 # ====== DEVICES ======
 async def _device_status(device: dict) -> str:
-    if device.get("status") == "pending":
-        return "pending"
-    if device.get("status") == "rejected":
-        return "rejected"
-    last = device.get("last_seen")
-    if not last:
-        return "inactive"
-    last_dt = datetime.fromisoformat(last)
-    if datetime.now(timezone.utc) - last_dt > timedelta(seconds=INACTIVE_AFTER_SECONDS):
-        return "inactive"
-    return "active"
-
+    return device_live_status(device)
 
 @api.get("/devices")
 async def list_devices(admin=Depends(require_role("admin"))):
@@ -542,10 +545,7 @@ async def device_readings(device_id: str, limit: int = 200, admin=Depends(requir
 
 @api.get("/devices/{device_id}/alerts")
 async def device_alerts(device_id: str, admin=Depends(require_role("admin"))):
-    return await db.alerts.find(
-        {"device_id": device_id}, {"_id": 0}
-    ).sort("ts", -1).to_list(200)
-
+    return await alert_service.list_device_alerts(device_id)
 
 @api.post("/devices/secure-mode")
 async def toggle_secure_mode(body: ToggleHmacRequest, request: Request,
@@ -849,39 +849,25 @@ async def audit_export(
 # ====== ALERTS ======
 @api.get("/alerts")
 async def list_alerts(active_only: bool = False, admin=Depends(require_role("admin"))):
-    q = {"acknowledged": False} if active_only else {}
-    return await db.alerts.find(q, {"_id": 0}).sort("ts", -1).to_list(500)
+    return await alert_service.list_alerts(active_only)
 
 
 @api.post("/alerts/{alert_id}/ack")
 async def ack_alert(alert_id: str, request: Request, admin=Depends(require_role("admin"))):
-    alert = await db.alerts.find_one({"id": alert_id})
-    await db.alerts.update_one(
-        {"id": alert_id},
-        {"$set": {"acknowledged": True, "acknowledged_by": admin["email"], "acknowledged_at": now_iso()}},
-    )
-    if alert:
-        await audit("alert.acknowledged", request=request, actor=admin,
-                    target_type="alert", target_id=alert_id,
-                    target_label=alert.get("device_id"),
-                    metadata={"severity": alert.get("severity"),
-                              "temperature": alert.get("temperature")})
-    return {"ok": True}
+    alert = await alert_service.acknowledge(alert_id, admin["email"])
+    await audit("alert.acknowledged", request=request, actor=admin,
+                target_type="alert", target_id=alert_id, target_label=alert.get("device_id"),
+                metadata={"severity": alert.get("severity"), "temperature": alert.get("temperature")})
+    return {"ok": True, "alert": alert}
 
 
 @api.post("/devices/{device_id}/alerts/ack-all")
 async def ack_all_device_alerts(device_id: str, request: Request, admin=Depends(require_role("admin"))):
-    if not await db.devices.find_one({"device_id": device_id}, {"_id": 1}):
-        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
-    res = await db.alerts.update_many(
-        {"device_id": device_id, "acknowledged": False},
-        {"$set": {"acknowledged": True, "acknowledged_by": admin["email"], "acknowledged_at": now_iso()}},
-    )
+    count = await alert_service.acknowledge_device(device_id, admin["email"])
     await audit("alert.acknowledged_all", request=request, actor=admin,
                 target_type="device", target_id=device_id, target_label=device_id,
-                metadata={"count": res.modified_count})
-    return {"ok": True, "count": res.modified_count}
-
+                metadata={"count": count})
+    return {"ok": True, "count": count}
 
 # ====== STATS ======
 @api.get("/stats/summary")
@@ -906,121 +892,11 @@ async def stats_summary(admin=Depends(require_role("admin"))):
 
 
 # ====== TEMPERATURE INGEST (ESP32) ======
-def _compute_hmac(secret: str, device_id: str, nonce: int, temperature: float) -> str:
-    """HMAC-SHA256 hex of '{device_id}|{nonce}|{temperature}' with the device password as key.
-    Temperature is normalised to 2 decimal places to avoid float-string mismatches.
-    """
-    msg = f"{device_id}|{nonce}|{temperature:.2f}".encode("utf-8")
-    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
-
-
 @api.post("/temperatura")
 async def ingest_temperature(body: TemperatureIngest):
-    """Endpoint público al que el ESP32 hace POST. Auth por device_id + device_password.
-    Soporta opcional HMAC + nonce anti-replay. Si el dispositivo tiene `require_hmac=True`,
-    se exigen `nonce` y `signature` válidos.
-    """
-    device = await db.devices.find_one({"device_id": body.deviceId})
-    if not device:
-        # First time - register as pending. Si trae HMAC, lo validamos y lo dejamos
-        # en modo seguro desde el inicio. Si no, queda en compatibilidad.
-        require_hmac = False
-        if body.nonce is not None and body.signature is not None:
-            expected = _compute_hmac(body.devicePassword, body.deviceId, body.nonce, body.temperature)
-            if not hmac.compare_digest(expected, body.signature):
-                raise HTTPException(status_code=401, detail="Firma HMAC inválida")
-            require_hmac = True
-        new_dev = {
-            "id": str(uuid.uuid4()),
-            "device_id": body.deviceId,
-            "name": body.deviceId,
-            "device_password_hash": hash_password(body.devicePassword),
-            "status": "pending",
-            "created_at": now_iso(),
-            "last_seen": now_iso(),
-            "last_temperature": body.temperature,
-            "transporter_email": None,
-            "require_hmac": require_hmac,
-            "last_nonce": body.nonce if body.nonce is not None else 0,
-        }
-        await db.devices.insert_one(new_dev)
-        await db.events.insert_one({
-            "id": str(uuid.uuid4()), "device_id": body.deviceId,
-            "type": "device_registered_pending", "ts": now_iso(),
-        })
-        return {"ok": True, "status": "pending", "message": "Dispositivo registrado, esperando aprobación"}
-
-    # verify password
-    if not verify_password(body.devicePassword, device.get("device_password_hash", "")):
-        raise HTTPException(status_code=401, detail="Contraseña del dispositivo inválida")
-
-    # HMAC validation
-    require_hmac = bool(device.get("require_hmac", False))
-    if require_hmac or body.signature is not None:
-        if body.nonce is None or body.signature is None:
-            raise HTTPException(status_code=401, detail="Falta nonce/signature (modo seguro activo)")
-        expected = _compute_hmac(body.devicePassword, body.deviceId, body.nonce, body.temperature)
-        if not hmac.compare_digest(expected, body.signature):
-            raise HTTPException(status_code=401, detail="Firma HMAC inválida")
-        last_nonce = int(device.get("last_nonce") or 0)
-        if body.nonce <= last_nonce:
-            raise HTTPException(status_code=409, detail="Nonce reutilizado (replay)")
-
-    if device["status"] == "rejected":
-        raise HTTPException(status_code=403, detail="Dispositivo rechazado")
-    if device["status"] == "pending":
-        # update last_seen but don't accept readings
-        upd = {"last_seen": now_iso()}
-        if body.nonce is not None:
-            upd["last_nonce"] = body.nonce
-        await db.devices.update_one({"device_id": body.deviceId}, {"$set": upd})
-        return {"ok": True, "status": "pending", "message": "Esperando aprobación del administrador"}
-
-    # store reading
-    reading_id = str(uuid.uuid4())
-    ts = now_iso()
-    await db.readings.insert_one({
-        "id": reading_id, "device_id": body.deviceId,
-        "temperature": body.temperature, "ts": ts,
-    })
-    await db.devices.update_one(
-        {"device_id": body.deviceId},
-        {"$set": {
-            "last_seen": ts,
-            "last_temperature": body.temperature,
-            **({"last_nonce": body.nonce} if body.nonce is not None else {}),
-        }},
-    )
-
-    # Alerting logic
-    sev = None
-    msg = None
-    t = body.temperature
-    if t < TEMP_MIN or t > TEMP_MAX:
-        sev = "critical"
-        msg = (
-            f"TEMPERATURA FUERA DE RANGO ({t:.2f}°C). Cadena de frío comprometida."
-            if (t > TEMP_MAX) else
-            f"TEMPERATURA CRÍTICA BAJA ({t:.2f}°C). Cadena de frío comprometida."
-        )
-    elif t <= WARN_LOW or t >= WARN_HIGH:
-        sev = "warning"
-        msg = f"Temperatura cercana al límite ({t:.2f}°C). Acción preventiva."
-
-    if sev:
-        await db.alerts.insert_one({
-            "id": str(uuid.uuid4()),
-            "device_id": body.deviceId,
-            "device_name": device.get("name", body.deviceId),
-            "severity": sev,
-            "type": "temperature_out_of_range" if sev == "critical" else "temperature_warning",
-            "message": msg,
-            "temperature": t,
-            "ts": ts,
-            "acknowledged": False,
-        })
-
-    return {"ok": True, "status": "active", "alert": sev}
+    """RF-01: endpoint público del ESP32. Delega en IngestionService."""
+    return await ingestion_service.ingest(body.deviceId, body.devicePassword, body.temperature,
+                                          body.nonce, body.signature)
 
 
 # ====== TRANSPORTER VIEW ======
