@@ -13,7 +13,8 @@ import { TempBadge } from "../components/Badges";
 export default function TransporterPage() {
   const { t } = useI18n();
   const [list, setList] = useState(null);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelectedState] = useState(() => sessionStorage.getItem("cc_tr_selected"));
+  const setSelected = (id) => { sessionStorage.setItem("cc_tr_selected", id); setSelectedState(id); };
   const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {

@@ -39,6 +39,12 @@ Plataforma de monitoreo de cadena de frío (2°C – 8°C) para biológicos. Har
 - README.md en español: descripción, ejecución local (Windows/Linux), diagrama de conexión DS18B20→ESP32 (GPIO 4 + pull-up 4.7kΩ), diagrama de contexto Mermaid de la arquitectura.
 - Alertas por correo (Gmail SMTP) se implementaron y luego se RETIRARON a pedido del usuario. No reintroducir sin que lo pida.
 
+## Nov 2026 – iteration 4
+- Fix: admin can set device transporter back to "Ninguno" (approve with transporter_email="" -> null).
+- Transporter multi-device: unlock flow kept; user.unlocked_devices (reset on each transporter login); GET /api/transporter/devices {devices, assigned_total}; "Conectar otro dispositivo" dialog + device tabs + pending hint.
+- Admin alerts grouped one row per device (highest pending severity, pending/total) + dialog with per-alert ack and POST /api/devices/{id}/alerts/ack-all.
+- QA admin for preview tests: see test_credentials.md. Tested: iteration_4.json (all pass).
+
 ## Backlog / Next Up
 - **P1:** Rate limiting / brute-force lockout en `/api/auth/login`
 - **P1:** Notificaciones push browser (web push)

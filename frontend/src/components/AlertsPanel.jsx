@@ -10,12 +10,17 @@ import { toast } from "sonner";
 
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 
+const SEV_RANK = { critical: 2, warning: 1 };
+
 function groupByDevice(alerts) {
   const map = new Map();
   for (const a of alerts) {
-    const g = map.get(a.device_id) || { device_id: a.device_id, device_name: a.device_name, latest: a, total: 0, pending: 0 };
+    const g = map.get(a.device_id) || { device_id: a.device_id, device_name: a.device_name, latest: a, top: null, total: 0, pending: 0 };
     g.total += 1;
-    if (!a.acknowledged) g.pending += 1;
+    if (!a.acknowledged) {
+      g.pending += 1;
+      if (!g.top || (SEV_RANK[a.severity] || 0) > (SEV_RANK[g.top] || 0)) g.top = a.severity;
+    }
     if (a.ts > g.latest.ts) g.latest = a;
     map.set(a.device_id, g);
   }
@@ -103,7 +108,7 @@ export default function AlertsPanel({ alerts, onChanged }) {
               <tr key={g.device_id} onClick={() => setOpenDevice(g.device_id)}
                 className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors ${g.pending ? "" : "opacity-60"}`}
                 data-testid={`alert-group-${g.device_id}`}>
-                <td className="py-3 px-4"><SeverityBadge severity={g.latest.severity} t={t} /></td>
+                <td className="py-3 px-4"><SeverityBadge severity={g.top || g.latest.severity} t={t} /></td>
                 <td className="py-3 px-4 mono">{g.device_id}</td>
                 <td className="py-3 px-4 text-slate-700">{g.latest.message}</td>
                 <td className="py-3 px-4 mono text-xs text-slate-600">{fmtTime(g.latest.ts)}</td>

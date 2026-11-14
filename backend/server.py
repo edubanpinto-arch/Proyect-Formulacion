@@ -871,6 +871,8 @@ async def ack_alert(alert_id: str, request: Request, admin=Depends(require_role(
 
 @api.post("/devices/{device_id}/alerts/ack-all")
 async def ack_all_device_alerts(device_id: str, request: Request, admin=Depends(require_role("admin"))):
+    if not await db.devices.find_one({"device_id": device_id}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
     res = await db.alerts.update_many(
         {"device_id": device_id, "acknowledged": False},
         {"$set": {"acknowledged": True, "acknowledged_by": admin["email"], "acknowledged_at": now_iso()}},
@@ -1032,7 +1034,7 @@ async def transporter_access(body: TransporterAccessRequest, user=Depends(requir
     candidates.sort(key=lambda d: d["device_id"] in already)
     matched = None
     for d in candidates:
-        if verify_password(body.device_password, d.get("device_password_hash", "")):
+        if await asyncio.to_thread(verify_password, body.device_password, d.get("device_password_hash", "")):
             # if device has assigned transporter, must match
             if d.get("transporter_email") and d["transporter_email"] != user["email"]:
                 continue

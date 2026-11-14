@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 4: tested (1) unassigning a transporter back to 'Ninguno', (2) a transporter connecting several devices, (3) admin Alerts grouped one row per device, with a dialog that has per-alert ack and 'Reconocer todas' (ack all). Backend pytest: 4 of 4 tests passed (these are multi-assertion flow tests). Frontend Playwright flows passed: admin devices assign/unassign, admin alerts grouping + dialog + ack-all, transporter multi-unlock + tabs + connect-another dialog. Regression passed: KPIs, users tab, audit tab, ESP32 ingest. No functional bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/devices/{device_id}/alerts/ack-all", "issue": "Returns 200 {count:0} for a device that does not exist, instead of 404. It also writes an audit entry for that non-existent device."},
+      {"endpoint": "POST /api/transporter/access", "issue": "Checks the password with bcrypt against every approved device in a loop (up to 500). bcrypt is synchronous, so this blocks the event loop for about 250ms per device and gets slow as the fleet grows. Suggest running it with run_in_threadpool or narrowing the candidate devices first."},
+      {"endpoint": "POST /api/auth/login (transporter)", "issue": "Each login clears unlocked_devices for the user across all sessions. Logging in on a second browser or phone re-locks the first session's devices (its next poll returns devices:[] and it goes back to the unlock screen). This may be intended; it should be confirmed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin Alerts tab grouped row", "issues": ["The severity badge shows the LATEST alert's severity. A device with 3 pending CRITICAL alerts and a latest WARNING shows only 'PREVENTIVA', so critical alerts can be missed. Consider showing the highest pending severity."]},
+      {"screen": "Transporter view", "issues": ["The single-device status badge reads 'INACTIVOS' (plural) for one device; it should be singular 'Inactivo'.", "After a page reload the selected tab goes back to the first device (selection is not kept)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_multidevice_alerts.py", "/app/backend/tests/ui_setup_iter4.py", "/app/test_reports/pytest/iter4.xml"],
+  "action_items": [
+    "Optional: ack-all should return 404 for an unknown device",
+    "Optional: in the Alerts group row, show the highest pending severity instead of the latest alert's severity",
+    "Optional: make the transporter bcrypt loop non-blocking (threadpool)",
+    "Optional: fix the singular status label ('Inactivo') in the transporter view"
+  ],
+  "critical_code_review_comments": [
+    "Alert grouping is built from GET /api/alerts, which is capped at 500 alerts across all devices. Once there are more than 500 alerts, the pending/total counter on a row can disagree with the dialog (which uses /devices/{id}/alerts, capped at 200). Consider a server-side aggregation endpoint that groups by device.",
+    "/app/backend/tests/backend_test.py (an earlier test file) uses a hardcoded fallback URL and resets the main admin edubanpinto@gmail.com's password and 2FA. Do NOT run it, because it would overwrite the owner's account. It should be rewritten or removed.",
+    "server.py is 1161 lines and should be split into routers (auth, devices, alerts, transporter)."
+  ],
+  "updated_files": ["/app/backend/tests/test_multidevice_alerts.py", "/app/backend/tests/ui_setup_iter4.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created devices TEST_MD_*_<suffix>, TEST_UI_A, TEST_UI_B and a transporter test_other_<suffix>@coldchain.com. All of them, with their readings, alerts and events, were deleted by id afterwards, and their ids were removed from transportador's unlocked_devices. ESP32_VACUNA_001 was not touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: REACT_APP_BACKEND_URL=... pytest tests/test_multidevice_alerts.py -p no:xdist. For UI tests: python tests/ui_setup_iter4.py setup (TEST_UI_A pwd UIPWA_111 with 4 alerts; TEST_UI_B pwd UIPWB_222 with 1 alert; both assigned to transportador), then 'cleanup'. The QA admin TOTP can be generated in the Playwright script with pure hmac (see the logic in the iteration-4 thoughts). Do not run backend_test.py."
+}
