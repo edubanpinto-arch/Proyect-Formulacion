@@ -65,7 +65,7 @@ URL base local: `http://localhost:8001`. Todas las rutas llevan el prefijo `/api
 | RF | Método y ruta | Entrada | Éxito | Errores | Servicio |
 |----|---------------|---------|-------|---------|----------|
 | RF-01 | `POST /api/temperatura` (pública, para el ESP32) | JSON `deviceId` (1-64 caracteres), `devicePassword` (1-128), `temperature` (número entre -55 y 125); `nonce` (entero ≥ 0) y `signature` (hex) opcionales | 200 `pending` o `active` | 401, 403, 409, 422, 500 | `IngestionService.ingest` |
-| RF-01 | `GET /api/devices/{device_id}/readings?limit=200` (admin) | `device_id` en la ruta | 200 con lista de lecturas | 401, 403 | Consulta de soporte |
+| RF-01 | `GET /api/devices/{device_id}/readings?limit=200` (admin) | `device_id` en la ruta; `limit` entre 1 y 5000 | 200 con lista de lecturas | 401, 403, 422 | Consulta de soporte |
 | RF-01 | `POST /api/devices/approve` / `POST /api/devices/reject` (admin) | `{"device_id": "..."}` | 200 | 401, 403, 404 | Soporte de RF-01 |
 | RF-02 | `GET /api/alerts?active_only=true\|false` (admin) | Query opcional | 200 con lista de alertas | 401, 403 | `AlertService.list_alerts` |
 | RF-02 | `GET /api/devices/{device_id}/alerts` (admin) | `device_id` | 200 con lista | 401, 403, 404 | `AlertService.list_device_alerts` |

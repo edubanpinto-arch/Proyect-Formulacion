@@ -15,7 +15,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, Request, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -515,10 +515,12 @@ async def approve_device(body: DeviceApproveRequest, request: Request,
 @api.post("/devices/reject")
 async def reject_device(body: DeviceRejectRequest, request: Request,
                         admin=Depends(require_role("admin"))):
-    await db.devices.update_one(
+    result = await db.devices.update_one(
         {"device_id": body.device_id},
         {"$set": {"status": "rejected", "rejected_at": now_iso()}},
     )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No encontrado")
     await audit("device.rejected", request=request, actor=admin,
                 target_type="device", target_id=body.device_id,
                 target_label=body.device_id)
@@ -535,7 +537,7 @@ async def device_detail(device_id: str, admin=Depends(require_role("admin"))):
 
 
 @api.get("/devices/{device_id}/readings")
-async def device_readings(device_id: str, limit: int = 200, admin=Depends(require_role("admin"))):
+async def device_readings(device_id: str, limit: int = Query(200, ge=1, le=5000), admin=Depends(require_role("admin"))):
     items = await db.readings.find(
         {"device_id": device_id}, {"_id": 0}
     ).sort("ts", -1).to_list(limit)
