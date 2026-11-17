@@ -1,0 +1,12 @@
+{
+  "email": "qa_rnf04_f054db@coldchain.com",
+  "pwd": "QaRnf04!",
+  "secret": "JEOOQUEPZDODU37ZIDSEPV6I2WEPLW2X",
+  "device_id": "TEST_RNF04_350e78",
+  "device_pwd": "Clave_RNF04",
+  "confirmed": [
+    "5a429b4a-74e9-4da4-abaa-b87816a52d85"
+  ],
+  "count_before": 1,
+  "ts_before": "2026-11-17T14:57:57.735418+00:00"
+}
