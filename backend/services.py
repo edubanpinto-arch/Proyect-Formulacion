@@ -173,7 +173,12 @@ class IngestionService:
                 raise InvalidCredentials("Falta nonce/signature (modo seguro activo)")
             if not self._signature_ok(password, device_id, nonce, temperature, signature):
                 raise InvalidCredentials("Firma HMAC inválida")
-            if nonce <= int(device.get("last_nonce") or 0):
+            stored_nonce = int(device.get("last_nonce") or 0)
+            EPOCH_THRESHOLD = 1_000_000_000  # ~año 2001: distingue epoch-Unix de millis-uptime
+            # Permitir si el nuevo nonce es epoch-scale y el guardado era millis-scale
+            # (dispositivo reiniciado y actualizado a firmware NTP)
+            epoch_upgrade = (nonce >= EPOCH_THRESHOLD and stored_nonce < EPOCH_THRESHOLD)
+            if nonce <= stored_nonce and not epoch_upgrade:
                 raise Conflict("Nonce reutilizado (replay)")
 
         nonce_upd = {"last_nonce": nonce} if nonce is not None else {}
