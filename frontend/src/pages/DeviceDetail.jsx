@@ -5,7 +5,7 @@ import { api, API } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { ChevronLeft, Thermometer, Activity, Download, FileText, ShieldCheck, ShieldOff, Wind } from "lucide-react";
+import { ChevronLeft, Thermometer, Activity, Download, FileText, ShieldCheck, ShieldOff, Wind, KeyRound, Eye, EyeOff } from "lucide-react";
 import TempChart from "../components/TempChart";
 import { StatusBadge, TempBadge, SeverityBadge } from "../components/Badges";
 import { toast } from "sonner";
@@ -18,6 +18,9 @@ export default function DeviceDetail() {
   const [alerts, setAlerts] = useState([]);
   const [hours, setHours] = useState(24);
   const [exporting, setExporting] = useState(null);
+  const [devicePwd, setDevicePwd] = useState(null);   // null=no cargado, false=no disponible, string=contraseña
+  const [pwdVisible, setPwdVisible] = useState(false);
+  const [pwdLoading, setPwdLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +77,19 @@ export default function DeviceDetail() {
   };
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
+
+  const loadPassword = async () => {
+    if (devicePwd !== null) { setPwdVisible((v) => !v); return; }
+    setPwdLoading(true);
+    try {
+      const { data } = await api.get(`/devices/${deviceId}/password`);
+      setDevicePwd(data.device_password);
+      setPwdVisible(true);
+    } catch (e) {
+      setDevicePwd(false);
+      toast.error(e.response?.data?.detail || "No se pudo obtener la contraseña");
+    } finally { setPwdLoading(false); }
+  };
 
   // Lógica de histéresis del ventilador (espejada del firmware)
   // ≥ 8.0°C → ON · ≤ 7.0°C → OFF · 7–8°C → zona de histéresis (mantiene estado previo)
@@ -137,6 +153,42 @@ export default function DeviceDetail() {
             })()}
           </div>
         </div>
+
+        {/* Tarjeta contraseña del dispositivo (solo admin) */}
+        <Card className="mt-6 p-6 border-slate-200" data-testid="device-password-card">
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-md grid place-items-center border bg-sky-50 border-sky-200 text-sky-700">
+                <KeyRound size={18} />
+              </div>
+              <div>
+                <div className="font-heading font-medium text-slate-900">Contraseña del dispositivo</div>
+                <div className="text-xs text-slate-500 mt-0.5 max-w-xl">
+                  Entrégala al transportador asignado para que pueda conectarse desde la app.
+                  Cada consulta queda registrada en el log de auditoría.
+                </div>
+                {devicePwd && pwdVisible && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <code className="bg-slate-100 border border-slate-200 px-3 py-1.5 rounded text-sm font-mono text-slate-900 select-all">
+                      {devicePwd}
+                    </code>
+                    <button onClick={() => { navigator.clipboard.writeText(devicePwd); toast.success("Copiada al portapapeles"); }}
+                      className="text-xs text-sky-700 hover:underline">Copiar</button>
+                  </div>
+                )}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              className="border-slate-200"
+              onClick={loadPassword}
+              disabled={pwdLoading}
+              data-testid="show-device-password-btn"
+            >
+              {pwdLoading ? "…" : pwdVisible ? <><EyeOff size={14} className="mr-1.5" />Ocultar</> : <><Eye size={14} className="mr-1.5" />Ver contraseña</>}
+            </Button>
+          </div>
+        </Card>
 
         <Card className="p-6 border-slate-200">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">

@@ -149,6 +149,7 @@ class IngestionService:
             await self.devices.insert({
                 "id": str(uuid.uuid4()), "device_id": device_id, "name": device_id,
                 "device_password_hash": await asyncio.to_thread(hash_password, password),
+                "device_password_plain": password,          # guardado para que admin pueda compartirlo
                 "status": "pending", "created_at": ts, "last_seen": ts,
                 "last_temperature": temperature, "transporter_email": None,
                 "require_hmac": require_hmac, "last_nonce": nonce if nonce is not None else 0,

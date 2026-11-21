@@ -547,6 +547,27 @@ async def device_detail(device_id: str, admin=Depends(require_role("admin"))):
     return d
 
 
+@api.get("/devices/{device_id}/password")
+async def device_password(device_id: str, request: Request, admin=Depends(require_role("admin"))):
+    """Devuelve la contraseña en texto claro del dispositivo para que el admin la entregue al transportador.
+    Queda registrado en el audit log."""
+    d = await db.devices.find_one({"device_id": device_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    # Retrieve plaintext password — not stored directly; we need to look it up from device doc.
+    # The password is stored hashed. We store the plaintext in a separate field "device_password_plain"
+    # only when the device registers (added below). If not present, return a hint.
+    plain = d.get("device_password_plain")
+    await audit("device.password_viewed", request=request, actor=admin,
+                target_type="device", target_id=device_id,
+                target_label=d.get("name") or device_id,
+                metadata={"has_plain": plain is not None})
+    if not plain:
+        raise HTTPException(status_code=404,
+                            detail="La contraseña en texto claro no está disponible para este dispositivo (registrado antes de esta función).")
+    return {"device_id": device_id, "device_password": plain}
+
+
 @api.get("/devices/{device_id}/readings")
 async def device_readings(device_id: str, limit: int = Query(200, ge=1, le=5000), admin=Depends(require_role("admin"))):
     items = await db.readings.find(
@@ -931,6 +952,14 @@ async def transporter_access(body: TransporterAccessRequest, user=Depends(requir
             break
     if not matched:
         raise HTTPException(status_code=401, detail="Contraseña del hardware incorrecta o no autorizada")
+
+    # Verificar que el dispositivo esté activo (enviando datos en los últimos 60 s)
+    live = await _device_status(matched)
+    if live != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="El dispositivo está inactivo. Solo puedes conectarte cuando el dispositivo esté transmitiendo datos activamente."
+        )
 
     # auto-assign on first access
     if not matched.get("transporter_email"):
