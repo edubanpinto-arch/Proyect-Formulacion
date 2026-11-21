@@ -234,6 +234,7 @@ python seed_demo.py --reset
 Detalle completo, contratos y checklist: `documentacion/ColdChain_Dashboard_Semana14_pruebas.pdf`.
 
 
+
 ## Semana 15 — Interfaz e integración del corte vertical
 
 La Semana 15 incorpora la **capa de interfaz (React)** que consume los contratos vigentes de la API y demuestra ambos RF de extremo a extremo:
@@ -293,10 +294,10 @@ frontend/
 
 | Método | Endpoint | Función |
 |---|---|---|
-| API | `/api/devices/approve` | Aprobar dispositivos pendientes |
-| API | `/api/alerts` | Consultar alertas |
-| API | `/api/alerts/{id}/ack` | Reconocer una alerta |
-| API | `/api/devices/{id}/alerts/ack-all` | Reconocer todas las alertas de un dispositivo |
+| POST | `/api/devices/approve` | Aprobar dispositivos pendientes |
+| GET | `/api/alerts` | Consultar alertas |
+| POST | `/api/alerts/{id}/ack` | Reconocer una alerta |
+| POST | `/api/devices/{id}/alerts/ack-all` | Reconocer todas las alertas de un dispositivo |
 
 La comunicación se realiza mediante **Axios**, utilizando la variable de entorno `REACT_APP_BACKEND_URL`.
 
@@ -330,7 +331,7 @@ python seed_demo.py --reset
 
 | RF | Error HTTP | Escenario |
 |---|---|---|
-| RF-01 | **403 Forbidden** | Dispositivo no aprobado o credenciales inválidas, según el escenario documentado. |
+| RF-01 | **403 Forbidden** | Dispositivo rechazado. |
 | RF-02 | **404 Not Found** | Intento de reconocimiento individual de una alerta inexistente. |
 
 ### Guion breve de demostración
@@ -383,7 +384,7 @@ Explicar el cumplimiento de RNF-03:
 - **Resultado:** 270,01 ms.
 - **Estado:** Cumple.
 
-Informar también el incumplimiento conocido de `ack-all`.
+Informar también la limitación conocida de `ack-all`.
 
 ### Calidad y matriz RF–RNF
 
@@ -446,4 +447,21 @@ El análisis completo incluye:
 documentacion/
 └── ColdChain_Dashboard_Semana15_Interfaz_integracion.pdf
 ```
+
+### Checklist final — Semana 15
+
+| Criterio | Cumple | Evidencia |
+|---|---|---|
+| Ambos RF conservan alcance, prioridad e identificadores. | Sí | Sección de RF y prioridad. |
+| La interfaz permite ejecutar ambos RF mediante sus API reales. | Sí, implementado | `AdminDashboard.jsx`, `AlertsPanel.jsx`, `DeviceDetail.jsx`. |
+| Los contratos coinciden con solicitudes y respuestas observadas. | Pendiente de confirmar localmente | Endpoints de API y `server.py`. |
+| Se prueban éxito, rechazo o ausencia pertinentes de ambos RF. | Parcial | Escenarios de integración; discrepancia en `ack-all`. |
+| Se demuestra persistencia y se evita confirmar resultados simulados. | Pendiente de confirmar localmente | Consulta de lecturas y MongoDB. |
+| Se manejan errores de entrada y comunicación de forma comprensible. | Pendiente de confirmar localmente | Interfaz y manejo de errores HTTP. |
+| Las reglas quedan en negocio y el acceso a datos en persistencia. | Sí | `services.py` y `repositories.py`. |
+| La matriz conserva trazabilidad RF–RNF–prueba–evidencia. | Sí | Matriz RF–RNF y documentación. |
+| Los resultados de calidad se comparan con las metas acordadas. | Sí, Semana 14 | Evidencias RNF-01 a RNF-06. |
+| Se identifican incumplimientos, no verificados y limitaciones. | Sí | Limitación de `ack-all` y verificaciones pendientes. |
+| Otra persona puede repetir la demostración con el README. | Pendiente de validar | Instrucciones de ejecución y escenarios. |
+
 
