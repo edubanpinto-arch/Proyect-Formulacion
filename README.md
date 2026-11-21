@@ -232,3 +232,218 @@ python seed_demo.py --reset
 | RF-02 / RNF-06 | Fiabilidad / Ausencia de fallos | Inactivo tras más de 60 s sin lecturas | Cumple | `tests/test_semana14_rf.py` |
 
 Detalle completo, contratos y checklist: `documentacion/ColdChain_Dashboard_Semana14_pruebas.pdf`.
+
+
+## Semana 15 — Interfaz e integración del corte vertical
+
+La Semana 15 incorpora la **capa de interfaz (React)** que consume los contratos vigentes de la API y demuestra ambos RF de extremo a extremo:
+
+> **Interfaz → API → Servicio → Repositorio → Base de datos**
+
+No se modifican los RF ni los RNF-01 a RNF-06: se conservan los identificadores, la prioridad y el alcance acordados en la Semana 14.
+
+La novedad es la integración visual y la verificación de los flujos completos desde la pantalla.
+
+### Diagrama de integración (corte vertical)
+
+```mermaid
+flowchart LR
+    UI["Frontend React<br/>AdminDashboard · AlertsPanel · DeviceDetail"]
+    API["Backend FastAPI<br/>server.py"]
+    SVC["services.py<br/>IngestionService · AlertService"]
+    REPO["repositories.py"]
+    DB[("MongoDB<br/>readings · alerts")]
+
+    UI -- "REST /api (Axios · JWT)" --> API
+    API --> SVC
+    SVC --> REPO
+    REPO <--> DB
+```
+
+### RF y prioridad (sin cambios de alcance)
+
+| RF | Prioridad | Acción desde la interfaz |
+|---|---|---|
+| **RF-01** | 1 (alta) | El administrador aprueba un dispositivo pendiente desde `AdminDashboard.jsx`; la siguiente lectura se persiste con su `reading_id` real y se ve en `DeviceDetail.jsx`. |
+| **RF-02** | 2 | El administrador lista alertas en `AlertsPanel.jsx`, reconoce una (`ack`) y reconoce todas (`ack-all`). |
+
+**Justificación de prioridad:**
+
+RF-01 va primero porque RF-02 consume las lecturas que RF-01 valida y guarda.
+
+### Componentes de la interfaz (Semana 15)
+
+```text
+frontend/
+└── src/
+    ├── AdminDashboard.jsx
+    │   └── RF-01: Aprobación de dispositivos
+    │       pendientes y panel de control.
+    │
+    ├── AlertsPanel.jsx
+    │   └── RF-02: Lista de alertas y diálogo
+    │       de reconocimiento (ack / ack-all).
+    │
+    └── DeviceDetail.jsx
+        └── Detalle del dispositivo con
+            lecturas y reading_id real.
+```
+
+**Endpoints consumidos por la interfaz:**
+
+| Método | Endpoint | Función |
+|---|---|---|
+| API | `/api/devices/approve` | Aprobar dispositivos pendientes |
+| API | `/api/alerts` | Consultar alertas |
+| API | `/api/alerts/{id}/ack` | Reconocer una alerta |
+| API | `/api/devices/{id}/alerts/ack-all` | Reconocer todas las alertas de un dispositivo |
+
+La comunicación se realiza mediante **Axios**, utilizando la variable de entorno `REACT_APP_BACKEND_URL`.
+
+### Escenarios de integración
+
+Con el backend y el frontend en ejecución, preparar los datos iniciales:
+
+```bash
+python seed_demo.py --reset
+```
+
+**1. RF-01 — Aprobación de dispositivos y persistencia**
+
+1. Iniciar sesión como administrador con autenticación 2FA.
+2. Acceder a `AdminDashboard.jsx`.
+3. Aprobar un dispositivo pendiente.
+4. Enviar una lectura de temperatura.
+5. Verificar que la lectura se almacena en MongoDB.
+6. Comprobar el `reading_id` real en `DeviceDetail.jsx`.
+
+**2. RF-02 — Gestión y reconocimiento de alertas**
+
+1. Recargar la interfaz.
+2. Acceder a `AlertsPanel.jsx`.
+3. Listar las alertas generadas.
+4. Abrir el diálogo de reconocimiento.
+5. Reconocer una alerta mediante `ack`.
+6. Ejecutar el reconocimiento general mediante `ack-all`.
+
+**3. Casos de error**
+
+| RF | Error HTTP | Escenario |
+|---|---|---|
+| RF-01 | **403 Forbidden** | Dispositivo no aprobado o credenciales inválidas, según el escenario documentado. |
+| RF-02 | **404 Not Found** | Intento de reconocimiento individual de una alerta inexistente. |
+
+### Guion breve de demostración
+
+**Paso 1 — Presentación de los RF**
+
+Presentar RF-01 y RF-02, explicando su prioridad.
+
+RF-01 es prioritario porque RF-02 depende de las lecturas validadas y almacenadas por RF-01.
+
+**Paso 2 — Demostración de RF-01**
+
+Desde `AdminDashboard.jsx`:
+
+- Aprobar un dispositivo pendiente.
+- Enviar una lectura de temperatura.
+- Verificar su almacenamiento.
+- Comprobar el identificador real de lectura.
+
+**Paso 3 — Demostración de RF-02**
+
+Desde `AlertsPanel.jsx`:
+
+- Listar las alertas del dispositivo.
+- Abrir el diálogo de reconocimiento.
+- Reconocer una alerta individual (`ack`).
+- Ejecutar el reconocimiento general (`ack-all`).
+- Mostrar los escenarios de error HTTP 403 y 404.
+
+**Paso 4 — Identificación del corte vertical**
+
+Localizar los siguientes componentes:
+
+| Capa | Archivo | Responsabilidad |
+|---|---|---|
+| Interfaz | `AdminDashboard.jsx` / `AlertsPanel.jsx` | Interacción con el usuario |
+| API | `server.py` | Exposición de endpoints |
+| Servicio | `services.py` | Lógica de negocio |
+| Repositorio | `repositories.py` | Acceso a persistencia |
+| Base de datos | MongoDB | Almacenamiento de lecturas y alertas |
+
+**Paso 5 — Evidencia de calidad**
+
+Explicar el cumplimiento de RNF-03:
+
+- **RNF:** RNF-03.
+- **Característica:** Eficiencia.
+- **Métrica:** Tiempo de respuesta p95.
+- **Meta:** Menor o igual a 500 ms.
+- **Resultado:** 270,01 ms.
+- **Estado:** Cumple.
+
+Informar también el incumplimiento conocido de `ack-all`.
+
+### Calidad y matriz RF–RNF
+
+Los RNF-01 a RNF-06 fueron verificados durante la Semana 14.
+
+Sus identificadores, condiciones, métricas, umbrales y resultados se mantienen sin modificaciones.
+
+La Semana 15 consolida estas evidencias y agrega la verificación visual mediante **Playwright**.
+
+**Reporte de pruebas de interfaz:**
+
+```text
+test_reports/iteration_4.json
+```
+
+**Resultados destacados:**
+
+| RNF | Característica | Meta | Resultado | Estado |
+|---|---|---|---|---|
+| RNF-03 | Eficiencia | p95 ≤ 500 ms | 270,01 ms | Cumple |
+| RNF-04 | Fiabilidad / Recuperabilidad | 20/20 lecturas consultables después del reinicio | 20/20 lecturas | Cumple |
+
+**RNF-03 — Eficiencia**
+
+El sistema registró un tiempo de respuesta p95 de **270,01 ms**, por debajo del límite de 500 ms establecido.
+
+**RNF-04 — Fiabilidad y recuperabilidad**
+
+Se verificó que las **20 de 20 lecturas** continuaban disponibles para consulta después de reiniciar el sistema.
+
+### Limitación conocida
+
+La funcionalidad **`ack-all` de RF-02** presenta una discrepancia en la integración.
+
+**Estado de las operaciones:**
+
+| Operación | Resultado |
+|---|---|
+| Reconocimiento individual (`ack`) | Funciona correctamente |
+| Reconocimiento general (`ack-all`) | No cumple |
+
+Esta limitación se informa explícitamente y no se oculta en los resultados.
+
+Para mayor detalle, consultar la **Sección 9** del documento de la Semana 15.
+
+### Documento de referencia
+
+El análisis completo incluye:
+
+- Matriz RF–RNF consolidada.
+- Contratos de integración.
+- Evidencias de ejecución.
+- Resultados de pruebas.
+- Limitaciones identificadas.
+- Checklist final de verificación.
+
+**Documento:**
+
+```text
+documentacion/
+└── ColdChain_Dashboard_Semana15_Interfaz_integracion.pdf
+```
+
