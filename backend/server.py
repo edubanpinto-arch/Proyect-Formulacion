@@ -1,8 +1,15 @@
 """ColdChain Dashboard backend - FastAPI + MongoDB."""
 from dotenv import load_dotenv
 from pathlib import Path
+import sys
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+
+# Asegurar disponibilidad de dependencias en caso de no haber activado el venv
+venv_site = ROOT_DIR / "venv" / "Lib" / "site-packages"
+if venv_site.exists() and str(venv_site) not in sys.path:
+    sys.path.append(str(venv_site))
 
 import os
 import uuid
