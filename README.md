@@ -447,13 +447,3 @@ documentacion/
 └── ColdChain_Dashboard_Semana15_Interfaz_integracion.pdf
 ```
 
-### Conclusión de la Semana 15
-
-La Semana 15 permite demostrar la integración del corte vertical del sistema ColdChain Dashboard, conectando la interfaz React con los servicios del backend FastAPI y la persistencia en MongoDB.
-
-Se demuestra el flujo de aprobación de dispositivos, almacenamiento de lecturas y gestión de alertas desde la interfaz.
-
-Los resultados de calidad se conservan respecto a la Semana 14 y se complementan con pruebas de interfaz mediante Playwright.
-
-Se mantiene documentada la discrepancia de `ack-all` como una limitación pendiente de corrección.
-
