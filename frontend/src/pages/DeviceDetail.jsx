@@ -5,7 +5,7 @@ import { api, API } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { ChevronLeft, Thermometer, Activity, Download, FileText, ShieldCheck, ShieldOff } from "lucide-react";
+import { ChevronLeft, Thermometer, Activity, Download, FileText, ShieldCheck, ShieldOff, Wind } from "lucide-react";
 import TempChart from "../components/TempChart";
 import { StatusBadge, TempBadge, SeverityBadge } from "../components/Badges";
 import { toast } from "sonner";
@@ -75,6 +75,15 @@ export default function DeviceDetail() {
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 
+  // Lógica de histéresis del ventilador (espejada del firmware)
+  // ≥ 8.0°C → ON · ≤ 7.0°C → OFF · 7–8°C → zona de histéresis (mantiene estado previo)
+  const fanStatus = (temp) => {
+    if (temp == null) return null;
+    if (temp >= 8.0) return "on";
+    if (temp <= 7.0) return "off";
+    return "hysteresis"; // 7 < temp < 8
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <Topbar />
@@ -102,6 +111,30 @@ export default function DeviceDetail() {
               <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">{t("target_range")}</div>
               <div className="mono text-emerald-700 font-medium">{t("range_2_8")}</div>
             </Card>
+            {/* Indicador de ventilador */}
+            {(() => {
+              const fs = fanStatus(device?.last_temperature);
+              if (!fs) return null;
+              const styles = {
+                on:          "bg-rose-50   border-rose-200   text-rose-700",
+                off:         "bg-slate-100 border-slate-200  text-slate-500",
+                hysteresis:  "bg-amber-50  border-amber-200  text-amber-700",
+              };
+              const labels = {
+                on:         "Ventilador ON",
+                off:        "Ventilador OFF",
+                hysteresis: "Histéresis (7–8°C)",
+              };
+              return (
+                <Card className={`px-5 py-3 flex items-center gap-3 border ${styles[fs]}`}>
+                  <Wind size={18} className={fs === "on" ? "animate-spin" : ""} style={fs === "on" ? { animationDuration: "2s" } : {}} />
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.22em] opacity-70">Control Térmico</div>
+                    <div className="text-sm font-semibold">{labels[fs]}</div>
+                  </div>
+                </Card>
+              );
+            })()}
           </div>
         </div>
 

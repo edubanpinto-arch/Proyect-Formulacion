@@ -6,7 +6,7 @@ import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { StatusBadge, TempBadge } from "../components/Badges";
-import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, ShieldAlert, Users } from "lucide-react";
+import { Activity, AlertTriangle, BatteryWarning, CheckCircle2, Clock, ShieldAlert, Users, Wind } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import UsersManager from "../components/UsersManager";
@@ -94,6 +94,30 @@ export default function AdminDashboard() {
 
   const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 
+  // Espeja la lógica de histéresis del firmware
+  const fanStatus = (temp) => {
+    if (temp == null) return null;
+    if (temp >= 8.0) return "on";
+    if (temp <= 7.0) return "off";
+    return "hysteresis";
+  };
+
+  const FanBadge = ({ temp }) => {
+    const fs = fanStatus(temp);
+    if (!fs) return <span className="text-slate-400">—</span>;
+    const cfg = {
+      on:         { cls: "text-rose-700  bg-rose-50  border-rose-200",  label: "ON"  },
+      off:        { cls: "text-slate-500 bg-slate-100 border-slate-200", label: "OFF" },
+      hysteresis: { cls: "text-amber-700 bg-amber-50 border-amber-200", label: "~"   },
+    }[fs];
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] uppercase font-semibold border ${cfg.cls}`}>
+        <Wind size={10} className={fs === "on" ? "animate-spin" : ""} style={fs === "on" ? { animationDuration: "2s" } : {}} />
+        {cfg.label}
+      </span>
+    );
+  };
+
   const activeAlerts = alerts.filter((a) => !a.acknowledged);
 
   return (
@@ -169,6 +193,7 @@ export default function AdminDashboard() {
                       <th className="text-left py-3 px-4">{t("device_name")}</th>
                       <th className="text-left py-3 px-4">{t("status")}</th>
                       <th className="text-left py-3 px-4">{t("last_temp")}</th>
+                      <th className="text-left py-3 px-4">Ventilador</th>
                       <th className="text-left py-3 px-4">{t("last_seen")}</th>
                       <th className="text-left py-3 px-4">{t("transporter_assigned")}</th>
                       <th className="text-right py-3 px-4">{t("actions")}</th>
@@ -176,7 +201,7 @@ export default function AdminDashboard() {
                   </thead>
                   <tbody>
                     {devices.length === 0 && (
-                      <tr><td colSpan={7} className="py-10 text-center text-slate-400">{t("no_devices")}</td></tr>
+                      <tr><td colSpan={8} className="py-10 text-center text-slate-400">{t("no_devices")}</td></tr>
                     )}
                     {devices.map((d) => (
                       <tr key={d.device_id} className="border-b border-slate-100 hover:bg-slate-50/50" data-testid={`device-row-${d.device_id}`}>
@@ -184,6 +209,7 @@ export default function AdminDashboard() {
                         <td className="py-3 px-4 text-slate-700">{d.name || "—"}</td>
                         <td className="py-3 px-4"><StatusBadge status={d.live_status} t={t} /></td>
                         <td className="py-3 px-4"><TempBadge value={d.last_temperature} /></td>
+                        <td className="py-3 px-4"><FanBadge temp={d.last_temperature} /></td>
                         <td className="py-3 px-4 text-slate-600 mono text-xs">{fmtTime(d.last_seen)}</td>
                         <td className="py-3 px-4 text-slate-700">
                           <select
