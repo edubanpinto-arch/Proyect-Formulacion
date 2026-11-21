@@ -1,8 +1,15 @@
 """ColdChain Dashboard backend - FastAPI + MongoDB."""
 from dotenv import load_dotenv
 from pathlib import Path
+import sys
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+
+# Asegurar disponibilidad de dependencias en caso de no haber activado el venv
+venv_site = ROOT_DIR / "venv" / "Lib" / "site-packages"
+if venv_site.exists() and str(venv_site) not in sys.path:
+    sys.path.append(str(venv_site))
 
 import os
 import uuid
@@ -12,6 +19,7 @@ import io
 import csv
 import logging
 import asyncio
+import certifi
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -44,7 +52,10 @@ logger = logging.getLogger("coldchain")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
+mongo_kwargs = {}
+if "mongodb+srv" in mongo_url or "ssl=true" in mongo_url.lower() or "tls=true" in mongo_url.lower():
+    mongo_kwargs["tlsCAFile"] = certifi.where()
+client = AsyncIOMotorClient(mongo_url, **mongo_kwargs)
 db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="ColdChain Dashboard")
@@ -987,7 +998,12 @@ async def seed_admin():
         })
         logger.info(f"Admin seeded: {email}")
     else:
-        logger.info(f"Admin already present: {email}")
+        # Asegurar que la contraseña coincida con ADMIN_PASSWORD de Render / .env
+        await db.users.update_one(
+            {"email": email},
+            {"$set": {"password_hash": hash_password(password)}}
+        )
+        logger.info(f"Admin already present; password synchronized with ADMIN_PASSWORD: {email}")
 
     # Seed a default transporter for testing
     t_email = "transportador@coldchain.com"
@@ -1019,8 +1035,16 @@ async def ensure_indexes():
 
 @app.on_event("startup")
 async def on_startup():
-    await ensure_indexes()
-    await seed_admin()
+    try:
+        await ensure_indexes()
+        logger.info("Indexes verified/created successfully.")
+    except Exception as e:
+        logger.warning(f"Could not ensure indexes: {e}")
+    try:
+        await seed_admin()
+        logger.info("Admin seeding procedure finished.")
+    except Exception as e:
+        logger.error(f"seed_admin execution error: {e}")
 
 
 @app.on_event("shutdown")
